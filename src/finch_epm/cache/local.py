@@ -47,7 +47,26 @@ class LocalCacheEngine(CacheEngine):
     def __init__(self, db_path: str = ":memory:", read_only: bool = False) -> None:
         self._db_path = db_path
         self._read_only = read_only
-        self._conn = duckdb.connect(db_path, read_only=read_only)
+        try:
+            self._conn = duckdb.connect(db_path, read_only=read_only)
+        except Exception:
+            if read_only:
+                # If read-only fails (file locked by writer), fall back to
+                # an in-memory copy. This lets the dashboard open even when
+                # sync is running -- it just won't see live updates until
+                # the sync finishes and the dashboard refreshes.
+                import shutil
+                import tempfile
+                temp = tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False)
+                temp.close()
+                try:
+                    shutil.copy2(db_path, temp.name)
+                except Exception:
+                    pass  # If copy fails, we get an empty DB
+                self._conn = duckdb.connect(temp.name, read_only=True)
+                self._db_path = temp.name
+            else:
+                raise
         if not read_only:
             self._ensure_watermark_table()
 
