@@ -37,7 +37,7 @@ class SyncEngine:
 
     Usage::
 
-        with NetSuiteConnector("ecp") as conn:
+        with NetSuiteConnector("production") as conn:
             cache = LocalCacheEngine(str(cache_db_path()))
             engine = SyncEngine(conn, cache)
             report = engine.sync_tables(["Account", "Subsidiary"], mode="full")

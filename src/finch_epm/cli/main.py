@@ -70,12 +70,12 @@ def auth(
 
     Import credentials from a .env file into the OS keychain:
 
-        finch-epm auth -c netsuite -p ecp --env-file /path/to/.env --key-file /path/to/key.pem
+        finch-epm auth -c netsuite -p myprofile --env-file /path/to/.env --key-file /path/to/key.pem
 
     After import, the .env and key file are never needed again.
     Validate stored credentials:
 
-        finch-epm auth -c netsuite -p ecp --validate
+        finch-epm auth -c netsuite -p myprofile --validate
     """
     if connector is None:
         connector = click.prompt(
@@ -359,20 +359,20 @@ def catalog(
 
     Crawl (introspect and save):
 
-        finch-epm catalog --crawl -c netsuite -p ecp
+        finch-epm catalog --crawl -c netsuite -p myprofile
 
     List tables:
 
-        finch-epm catalog --tables -c netsuite -p ecp
-        finch-epm catalog --tables --accessible-only -c netsuite -p ecp
+        finch-epm catalog --tables -c netsuite -p myprofile
+        finch-epm catalog --tables --accessible-only -c netsuite -p myprofile
 
     List columns for a table:
 
-        finch-epm catalog --columns Transaction -c netsuite -p ecp
+        finch-epm catalog --columns Transaction -c netsuite -p myprofile
 
     List dimensions:
 
-        finch-epm catalog --dimensions -c netsuite -p ecp
+        finch-epm catalog --dimensions -c netsuite -p myprofile
     """
     from finch_epm.catalog.catalog import CatalogStore
     from finch_epm.paths import catalog_db_path
@@ -514,15 +514,15 @@ def sync(
 
     Sync specific tables:
 
-        finch-epm sync -c netsuite -p ecp -t Account -t Subsidiary
+        finch-epm sync -c netsuite -p myprofile -t Account -t Subsidiary
 
     Sync all accessible tables:
 
-        finch-epm sync -c netsuite -p ecp --all
+        finch-epm sync -c netsuite -p myprofile --all
 
     Full sync (replace cached data):
 
-        finch-epm sync -c netsuite -p ecp -t Account --full
+        finch-epm sync -c netsuite -p myprofile -t Account --full
     """
     from finch_epm.cache.local import LocalCacheEngine
     from finch_epm.cache.sync import SyncEngine

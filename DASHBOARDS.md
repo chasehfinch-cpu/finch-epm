@@ -13,7 +13,7 @@ name: <string, required>
 description: <string, optional>
 sources:                          # informational -- tells users which connections are needed
   - netsuite/production           # connector_type/profile_name
-  - sqlserver/azure_pemmdw        # multiple sources supported
+  - sqlserver/my_database        # multiple sources supported
   - postgres                      # profile defaults to connector name if not specified
 
 queries:
@@ -276,7 +276,7 @@ Tables keep their `schema.table` names (e.g., `dbo.Hospital`, `CHNG.Payments`).
 
 ## Multiple data sources in one dashboard
 
-finch-epm supports connecting to multiple databases simultaneously. Each connection is a named profile (e.g., `sqlserver/azure_pemmdw`, `netsuite/production`, `sqlserver/onprem_warehouse`).
+finch-epm supports connecting to multiple databases simultaneously. Each connection is a named profile (e.g., `sqlserver/my_database`, `netsuite/production`, `sqlserver/onprem_warehouse`).
 
 All synced data goes into one local DuckDB cache. You can query tables from different sources in the same dashboard. The key is knowing the cache table names:
 
@@ -290,7 +290,7 @@ name: Combined Financial Overview
 description: NetSuite GL data alongside SQL Server revenue cycle data
 sources:
   - netsuite/production
-  - sqlserver/azure_pemmdw
+  - sqlserver/my_database
 
 queries:
   - name: netsuite_revenue
@@ -326,15 +326,15 @@ charts:
 To set up multiple connections:
 
 ```
-finch-epm auth -c sqlserver -p azure_pemmdw --env-file /path/to/pemmdw.env
+finch-epm auth -c sqlserver -p my_database --env-file /path/to/my_database.env
 finch-epm auth -c sqlserver -p onprem_warehouse --env-file /path/to/onprem.env
 finch-epm auth -c netsuite -p production --env-file /path/to/ns.env --key-file /path/to/key.pem
 
-finch-epm catalog --crawl -c sqlserver -p azure_pemmdw
+finch-epm catalog --crawl -c sqlserver -p my_database
 finch-epm catalog --crawl -c sqlserver -p onprem_warehouse
 finch-epm catalog --crawl -c netsuite -p production
 
-finch-epm sync -c sqlserver -p azure_pemmdw -t dbo.WaterFallT2
+finch-epm sync -c sqlserver -p my_database -t dbo.WaterFallT2
 finch-epm sync -c sqlserver -p onprem_warehouse -t dbo.SomeTable
 finch-epm sync -c netsuite -p production -t Account -t TransactionAccountingLine
 ```
@@ -480,7 +480,7 @@ charts:
     data: detail              # this query uses :PRACTICE parameter, auto-filtered
 ```
 
-When a user clicks a bar (e.g., "STPH"), the dashboard re-executes all queries with `PRACTICE=STPH` as a parameter override. A badge appears showing the active filter, and clicking the badge clears it.
+When a user clicks a bar (e.g., "SiteA"), the dashboard re-executes all queries with `PRACTICE=SiteA` as a parameter override. A badge appears showing the active filter, and clicking the badge clears it.
 
 ## Dimension mappings
 

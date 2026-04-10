@@ -179,8 +179,8 @@ def load_dimension_mappings(path: str | Path) -> DimensionMappingSet:
 
     Format::
 
-        name: ECP Dimensions
-        description: Reference table mappings for ECP reporting
+        name: My Company Dimensions
+        description: Reference table mappings for company reporting
         dimensions:
           - name: location
             display_name: Location / Site
