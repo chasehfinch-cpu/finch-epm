@@ -11,8 +11,10 @@ A `.fdash` file is YAML with the `.fdash` extension. It defines queries against 
 ```yaml
 name: <string, required>
 description: <string, optional>
-sources:
-  - <connector name>       # "netsuite", "sqlserver", "postgres"
+sources:                          # informational -- tells users which connections are needed
+  - netsuite/production           # connector_type/profile_name
+  - sqlserver/azure_pemmdw        # multiple sources supported
+  - postgres                      # profile defaults to connector name if not specified
 
 queries:
   - name: <string>
@@ -271,6 +273,77 @@ After `finch-epm sync -c netsuite -p <profile> -t <table>`:
 ### SQL Server / Postgres tables
 
 Tables keep their `schema.table` names (e.g., `dbo.Hospital`, `CHNG.Payments`).
+
+## Multiple data sources in one dashboard
+
+finch-epm supports connecting to multiple databases simultaneously. Each connection is a named profile (e.g., `sqlserver/azure_pemmdw`, `netsuite/production`, `sqlserver/onprem_warehouse`).
+
+All synced data goes into one local DuckDB cache. You can query tables from different sources in the same dashboard. The key is knowing the cache table names:
+
+- **NetSuite tables**: use the original PascalCase name (e.g., `Account`, `TransactionAccountingLine`)
+- **SQL Server / Postgres tables**: dots become double underscores (e.g., `dbo.WaterFallT2` becomes `dbo__WaterFallT2`)
+
+Example multi-source dashboard:
+
+```yaml
+name: Combined Financial Overview
+description: NetSuite GL data alongside SQL Server revenue cycle data
+sources:
+  - netsuite/production
+  - sqlserver/azure_pemmdw
+
+queries:
+  - name: netsuite_revenue
+    sql: |
+      SELECT a.accttype, SUM(CAST(t.amount AS DOUBLE)) * -1 AS revenue
+      FROM TransactionAccountingLine t
+      JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
+      WHERE a.accttype = 'Income' AND t.posting = 'T'
+      GROUP BY a.accttype
+
+  - name: rcm_cash
+    sql: |
+      SELECT PRACTICE, SUM(CAST(PAYMENTS AS DOUBLE)) * -1 AS cash
+      FROM dbo__WaterFallT2
+      WHERE SUBSTRING(FIRSTDOS, 1, 4) = '2024'
+      GROUP BY PRACTICE ORDER BY cash DESC
+
+charts:
+  - type: kpi
+    title: NetSuite Revenue
+    data: netsuite_revenue
+    value: revenue
+    format: currency
+    prefix: "$"
+
+  - type: bar
+    title: RCM Cash by Practice
+    data: rcm_cash
+    x: PRACTICE
+    y: cash
+```
+
+To set up multiple connections:
+
+```
+finch-epm auth -c sqlserver -p azure_pemmdw --env-file /path/to/pemmdw.env
+finch-epm auth -c sqlserver -p onprem_warehouse --env-file /path/to/onprem.env
+finch-epm auth -c netsuite -p production --env-file /path/to/ns.env --key-file /path/to/key.pem
+
+finch-epm catalog --crawl -c sqlserver -p azure_pemmdw
+finch-epm catalog --crawl -c sqlserver -p onprem_warehouse
+finch-epm catalog --crawl -c netsuite -p production
+
+finch-epm sync -c sqlserver -p azure_pemmdw -t dbo.WaterFallT2
+finch-epm sync -c sqlserver -p onprem_warehouse -t dbo.SomeTable
+finch-epm sync -c netsuite -p production -t Account -t TransactionAccountingLine
+```
+
+Or use the setup wizard which loops to add multiple connections:
+
+```
+finch-epm setup
+```
 
 ## SQL patterns for common dashboards
 

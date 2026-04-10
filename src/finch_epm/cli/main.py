@@ -613,64 +613,98 @@ def setup() -> None:
     """Interactive setup wizard for configuring data sources.
 
     Walks through connector selection, authentication, and initial
-    schema crawl.
+    schema crawl. Loops to let users add multiple connections.
     """
     click.echo("finch-epm setup")
     click.echo("=" * 40)
     click.echo()
 
-    # Step 1: Choose connector
-    connector = click.prompt(
-        "Which data source?",
-        type=click.Choice(["netsuite", "sqlserver", "postgres"]),
-        default="netsuite",
-    )
+    configured: list[tuple[str, str]] = []
+    connection_number = 1
 
-    # Step 2: Profile name
-    profile = click.prompt("Profile name", default="default")
+    while True:
+        if connection_number > 1:
+            click.echo()
+            click.echo(f"--- Connection {connection_number} ---")
 
-    # Step 3: Authentication
+        # Step 1: Choose connector
+        connector = click.prompt(
+            "Which data source?",
+            type=click.Choice(["netsuite", "sqlserver", "postgres"]),
+            default="netsuite",
+        )
+
+        # Step 2: Profile name
+        default_profile = connector if connection_number == 1 else f"{connector}_{connection_number}"
+        profile = click.prompt("Profile name", default=default_profile)
+
+        # Step 3: Authentication
+        click.echo()
+        click.echo(f"Authenticating with {connector}/{profile}...")
+
+        if connector == "netsuite":
+            click.echo("  Required: .env with NS_ACCOUNT_ID, NS_CLIENT_ID, NS_CERTIFICATE_ID")
+            click.echo("  Required: private key PEM file")
+            env_file = click.prompt("  Path to .env file")
+            key_file = click.prompt("  Path to private key PEM file", default="")
+            ctx = click.get_current_context()
+            ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,
+                       key_file=key_file or None, validate=False)
+        elif connector == "sqlserver":
+            click.echo("  Required: .env with AZURE_SQL_SERVER, AZURE_SQL_DATABASE,")
+            click.echo("  AZURE_SQL_USER, AZURE_SQL_PASSWORD")
+            env_file = click.prompt("  Path to .env file")
+            ctx = click.get_current_context()
+            ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,
+                       key_file=None, validate=False)
+        elif connector == "postgres":
+            click.echo("  Required: .env with PG_HOST, PG_PORT, PG_DATABASE,")
+            click.echo("  PG_USER, PG_PASSWORD")
+            env_file = click.prompt("  Path to .env file")
+            ctx = click.get_current_context()
+            ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,
+                       key_file=None, validate=False)
+
+        # Step 4: Validate
+        click.echo()
+        click.echo("Validating credentials...")
+        try:
+            _validate_credentials(connector, profile)
+        except SystemExit:
+            click.echo("Credentials failed. You can re-run setup to try again.")
+            continue
+
+        # Step 5: Crawl
+        click.echo()
+        click.echo("Crawling schema...")
+        _catalog_crawl(connector, profile)
+
+        configured.append((connector, profile))
+        connection_number += 1
+
+        # Ask about adding more
+        click.echo()
+        add_more = click.confirm("Add another data source?", default=False)
+        if not add_more:
+            break
+
+    # Summary
     click.echo()
-    click.echo(f"Step 1: Authenticate with {connector}")
-
-    if connector == "netsuite":
-        click.echo("  You need a .env file with: NS_ACCOUNT_ID, NS_CLIENT_ID, NS_CERTIFICATE_ID")
-        click.echo("  And a private key PEM file from your NetSuite integration.")
-        env_file = click.prompt("  Path to .env file")
-        key_file = click.prompt("  Path to private key PEM file", default="")
-        args = ["auth", "-c", connector, "-p", profile, "--env-file", env_file]
-        if key_file:
-            args.extend(["--key-file", key_file])
-        ctx = click.get_current_context()
-        ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,
-                   key_file=key_file or None, validate=False)
-    elif connector == "sqlserver":
-        click.echo("  You need a .env file with: AZURE_SQL_SERVER, AZURE_SQL_DATABASE,")
-        click.echo("  AZURE_SQL_USER, AZURE_SQL_PASSWORD")
-        env_file = click.prompt("  Path to .env file")
-        ctx = click.get_current_context()
-        ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,
-                   key_file=None, validate=False)
-    elif connector == "postgres":
-        click.echo("  You need a .env file with: PG_HOST, PG_PORT, PG_DATABASE,")
-        click.echo("  PG_USER, PG_PASSWORD")
-        env_file = click.prompt("  Path to .env file")
-        ctx = click.get_current_context()
-        ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,
-                   key_file=None, validate=False)
-
-    # Step 4: Validate
-    click.echo()
-    click.echo("Step 2: Validating credentials...")
-    _validate_credentials(connector, profile)
-
-    # Step 5: Crawl
-    click.echo()
-    click.echo("Step 3: Crawling schema...")
-    _catalog_crawl(connector, profile)
+    click.echo("=" * 40)
+    click.echo(f"Setup complete. {len(configured)} connection(s) configured:")
+    for conn_type, prof in configured:
+        click.echo(f"  {conn_type}/{prof}")
 
     click.echo()
-    click.echo("Setup complete. Next steps:")
-    click.echo(f"  finch-epm catalog --tables -c {connector} -p {profile}")
-    click.echo(f"  finch-epm sync -c {connector} -p {profile} -t <table_name>")
-    click.echo(f"  finch-epm open path/to/dashboard.fdash")
+    click.echo("Next steps:")
+    for conn_type, prof in configured:
+        click.echo(f"  finch-epm catalog --tables -c {conn_type} -p {prof}")
+        click.echo(f"  finch-epm sync -c {conn_type} -p {prof} -t <table>")
+    click.echo()
+    click.echo("To build a dashboard:")
+    click.echo("  finch-epm open path/to/dashboard.fdash")
+    click.echo()
+    click.echo("In .fdash files, reference a specific connection with:")
+    click.echo("  sources:")
+    for conn_type, prof in configured:
+        click.echo(f"    - {conn_type}/{prof}")
