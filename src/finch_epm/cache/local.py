@@ -230,8 +230,8 @@ class LocalCacheEngine(CacheEngine):
         col_list = ", ".join(column_names)
         insert_sql = f"INSERT INTO {table_name} ({col_list}) VALUES ({placeholders})"
 
-        for row in rows:
-            self._conn.execute(insert_sql, row)
+        # Batch insert for performance (executemany is much faster than row-by-row)
+        self._conn.executemany(insert_sql, rows)
 
         return len(rows)
 

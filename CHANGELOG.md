@@ -1,8 +1,31 @@
 # Changelog
 
+## v0.2.0-dev (2026-04-10)
+
+### Added
+
+- **SQL Server connector**: Full ConnectorBase implementation via pyodbc. INFORMATION_SCHEMA-based introspection, heuristic dimension detection, T-SQL queries. Supports Azure SQL and on-premises SQL Server.
+- **SQL Server authentication**: Connection string built from credentials stored in OS keychain. Auto-detects ODBC driver. Azure SQL encryption enabled automatically.
+- **SQL Server CLI support**: `finch-epm auth -c sqlserver` imports credentials from .env files containing AZURE_SQL_SERVER, AZURE_SQL_DATABASE, AZURE_SQL_USER, AZURE_SQL_PASSWORD.
+- **Batch insert optimization**: Cache ingestion now uses DuckDB's executemany() instead of row-by-row insert. Orders of magnitude faster for large syncs.
+- **Dashboard web server**: Built-in Python HTTP server (zero extra dependencies) serves dashboards as single-page apps.
+- **Dashboard frontend**: Interactive charts via Apache ECharts (bundled locally, works offline). All 8 chart types implemented: table, bar, line, area, scatter, time series, KPI tile, pivot table.
+- **.fdash parser**: Full YAML parser with validation against registered chart renderers. Typed DashboardSpec, QuerySpec, ChartSpec, ParameterSpec models.
+- **Dashboard resolver**: Executes dashboard queries against the cache with parameter substitution. Supports period parameters (current_quarter_start, current_year_end, etc.).
+- **CLI open command**: `finch-epm open dashboard.fdash` starts a local server and opens the dashboard in the browser.
+- **CLI setup wizard**: Interactive guided setup for connector authentication and schema crawling.
+- **Auto-refresh**: Dashboards poll for data changes every 30 seconds and re-render automatically.
+- **Staleness indicators**: Every query result shows when data was last synced.
+- **Optional dependency**: SQL Server connector installed via `pip install finch-epm[sqlserver]`.
+
+### Changed
+
+- Test count increased from 96 to 115.
+- Chart renderer builtins now produce real ECharts configurations instead of placeholder HTML.
+
 ## v0.1.0-dev (2026-04-10)
 
-Initial development release. Data pipeline is functional; dashboard UI is not yet built.
+Initial development release.
 
 ### Added
 
@@ -17,12 +40,9 @@ Initial development release. Data pipeline is functional; dashboard UI is not ye
 - **Profile manager**: Named credential profiles stored in the OS keychain via `keyring`. Non-secret config (account IDs, client IDs) stored in a JSON file under the platform-appropriate user data directory.
 - **Chart renderer interface**: Abstract base class with registry pattern. Eight built-in types registered as stubs (table, bar, line, area, kpi, pivot, timeseries, scatter).
 - **CLI**: `auth` (credential import and validation), `catalog` (crawl, list tables, list columns, list dimensions), `sync` (specific tables, all accessible, incremental/full).
-- **96 automated tests**: Full coverage of connector interface, catalog store, sync engine, cache, chart renderers, profiles, and NetSuite auth JWT construction.
 - **Platform paths**: Uses `platformdirs` for all file storage. No hardcoded paths. Compatible with future PyInstaller/Briefcase bundling.
 
 ### Known limitations
 
 - SuiteQL returns a maximum of 100,000 rows per query. Tables larger than this require multiple incremental syncs.
-- Cache inserts data row by row. Batch insert optimization planned.
-- All synced data is stored as VARCHAR in DuckDB. Type-aware column creation from catalog metadata is planned.
-- Dashboard parser, web server, and chart rendering are not yet implemented.
+- All synced data from NetSuite is stored as VARCHAR in DuckDB. Type-aware column creation from catalog metadata is planned.

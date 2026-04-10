@@ -22,6 +22,8 @@ def _make_connector(connector_type: str, profile_name: str) -> ConnectorBase:
     """
     if connector_type == "netsuite":
         import finch_epm.connectors.netsuite.connector  # noqa: F401
+    elif connector_type == "sqlserver":
+        import finch_epm.connectors.sqlserver.connector  # noqa: F401
     elif connector_type == "fake":
         import finch_epm.connectors.fake  # noqa: F401
 
@@ -34,12 +36,6 @@ def _make_connector(connector_type: str, profile_name: str) -> ConnectorBase:
 @click.version_option(version=__version__, prog_name="finch-epm")
 def cli() -> None:
     """finch-epm: Local-first portable analytics for EPM and database systems."""
-
-
-@cli.command()
-def setup() -> None:
-    """Run the setup wizard to configure data sources."""
-    click.echo("Setup wizard — not yet implemented.")
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +124,8 @@ def _import_credentials(
 
     if connector == "netsuite":
         _import_netsuite(pm, profile, env_vars, key_file)
+    elif connector == "sqlserver":
+        _import_sqlserver(pm, profile, env_vars)
     else:
         click.echo(f"Credential import not yet supported for: {connector}")
 
@@ -192,6 +190,48 @@ def _import_netsuite(
     click.echo(f"Run 'finch-epm auth -c netsuite -p {profile} --validate' to test.")
 
 
+def _import_sqlserver(
+    pm: "ProfileManager",
+    profile: str,
+    env_vars: dict[str, str],
+) -> None:
+    """Import SQL Server credentials into keyring."""
+    # Map env var names (support both AZURE_SQL_* and generic SQL_* patterns)
+    server = env_vars.get("AZURE_SQL_SERVER", env_vars.get("SQL_SERVER", ""))
+    database = env_vars.get("AZURE_SQL_DATABASE", env_vars.get("SQL_DATABASE", ""))
+    username = env_vars.get("AZURE_SQL_USER", env_vars.get("SQL_USER", ""))
+    password = env_vars.get("AZURE_SQL_PASSWORD", env_vars.get("SQL_PASSWORD", ""))
+
+    if not server:
+        click.echo("Error: Missing AZURE_SQL_SERVER (or SQL_SERVER) in .env")
+        raise SystemExit(1)
+    if not database:
+        click.echo("Error: Missing AZURE_SQL_DATABASE (or SQL_DATABASE) in .env")
+        raise SystemExit(1)
+    if not password:
+        click.echo("Error: Missing AZURE_SQL_PASSWORD (or SQL_PASSWORD) in .env")
+        raise SystemExit(1)
+
+    # Store non-secret config
+    pm.set_config("sqlserver", profile, {
+        "server": server,
+        "database": database,
+        "username": username,
+    })
+
+    # Store password in OS keychain
+    pm.set_secret("sqlserver", profile, "password", password)
+
+    click.echo(f"SQL Server credentials stored for profile '{profile}':")
+    click.echo(f"  Server:   {server}")
+    click.echo(f"  Database: {database}")
+    click.echo(f"  Username: {username}")
+    click.echo(f"  Password: stored in OS keychain")
+    click.echo()
+    click.echo("The .env file is no longer needed by finch-epm.")
+    click.echo(f"Run 'finch-epm auth -c sqlserver -p {profile} --validate' to test.")
+
+
 def _validate_credentials(connector: str, profile: str) -> None:
     """Test stored credentials against the live service."""
     from finch_epm.profiles.manager import ProfileManager
@@ -232,6 +272,21 @@ def _validate_credentials(connector: str, profile: str) -> None:
             raise SystemExit(1)
 
         authenticator.close()
+    elif connector == "sqlserver":
+        click.echo(f"Validating SQL Server credentials for profile '{profile}'...")
+        conn = _make_connector("sqlserver", profile)
+        try:
+            conn.connect()
+            if conn.validate_credentials():
+                click.echo("Credentials are valid. Connection successful.")
+            else:
+                click.echo("Credential validation failed.")
+                raise SystemExit(1)
+        except Exception as e:
+            click.echo(f"Connection failed: {e}")
+            raise SystemExit(1)
+        finally:
+            conn.close()
     else:
         click.echo(f"Validation not yet supported for: {connector}")
 
@@ -486,5 +541,87 @@ def sync(
 @click.option("--port", default=8765, help="Local server port")
 @click.option("--no-browser", is_flag=True, help="Don't open browser automatically")
 def open_dashboard(dashboard: str, port: int, no_browser: bool) -> None:
-    """Open a .fdash dashboard in the browser."""
-    click.echo(f"Opening {dashboard} on port {port} — not yet implemented.")
+    """Open a .fdash dashboard in the browser.
+
+    Starts a local web server and renders the dashboard against
+    cached data. Ctrl+C stops the server.
+
+        finch-epm open path/to/dashboard.fdash
+        finch-epm open dashboard.fdash --port 9000 --no-browser
+    """
+    from finch_epm.cache.local import LocalCacheEngine
+    from finch_epm.paths import cache_db_path
+    from finch_epm.server.app import DashboardServer
+
+    cache = LocalCacheEngine(str(cache_db_path()))
+    try:
+        server = DashboardServer(dashboard, cache)
+        server.start(port=port, open_browser=not no_browser)
+    finally:
+        cache.close()
+
+
+# ---------------------------------------------------------------------------
+# setup
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+def setup() -> None:
+    """Interactive setup wizard for configuring data sources.
+
+    Walks through connector selection, authentication, and initial
+    schema crawl.
+    """
+    click.echo("finch-epm setup")
+    click.echo("=" * 40)
+    click.echo()
+
+    # Step 1: Choose connector
+    connector = click.prompt(
+        "Which data source?",
+        type=click.Choice(["netsuite", "sqlserver"]),
+        default="netsuite",
+    )
+
+    # Step 2: Profile name
+    profile = click.prompt("Profile name", default="default")
+
+    # Step 3: Authentication
+    click.echo()
+    click.echo(f"Step 1: Authenticate with {connector}")
+
+    if connector == "netsuite":
+        click.echo("  You need a .env file with: NS_ACCOUNT_ID, NS_CLIENT_ID, NS_CERTIFICATE_ID")
+        click.echo("  And a private key PEM file from your NetSuite integration.")
+        env_file = click.prompt("  Path to .env file")
+        key_file = click.prompt("  Path to private key PEM file", default="")
+        args = ["auth", "-c", connector, "-p", profile, "--env-file", env_file]
+        if key_file:
+            args.extend(["--key-file", key_file])
+        ctx = click.get_current_context()
+        ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,
+                   key_file=key_file or None, validate=False)
+    elif connector == "sqlserver":
+        click.echo("  You need a .env file with: AZURE_SQL_SERVER, AZURE_SQL_DATABASE,")
+        click.echo("  AZURE_SQL_USER, AZURE_SQL_PASSWORD")
+        env_file = click.prompt("  Path to .env file")
+        ctx = click.get_current_context()
+        ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,
+                   key_file=None, validate=False)
+
+    # Step 4: Validate
+    click.echo()
+    click.echo("Step 2: Validating credentials...")
+    _validate_credentials(connector, profile)
+
+    # Step 5: Crawl
+    click.echo()
+    click.echo("Step 3: Crawling schema...")
+    _catalog_crawl(connector, profile)
+
+    click.echo()
+    click.echo("Setup complete. Next steps:")
+    click.echo(f"  finch-epm catalog --tables -c {connector} -p {profile}")
+    click.echo(f"  finch-epm sync -c {connector} -p {profile} -t <table_name>")
+    click.echo(f"  finch-epm open path/to/dashboard.fdash")

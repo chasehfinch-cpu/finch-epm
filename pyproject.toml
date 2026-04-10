@@ -21,6 +21,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+sqlserver = [
+    "pyodbc>=5.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov",

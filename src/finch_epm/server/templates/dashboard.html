@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>finch-epm</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f5f6f8; color: #1a1a2e; }
+.header { background: #1a1a2e; color: #fff; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-size: 18px; font-weight: 600; }
+.header .meta { font-size: 12px; color: #8888aa; }
+.staleness { font-size: 11px; color: #8888aa; margin-top: 2px; }
+.staleness.stale { color: #cc8800; }
+.staleness.missing { color: #cc3333; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 16px; padding: 20px 24px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }
+.card-header { padding: 14px 18px 0; font-size: 14px; font-weight: 600; color: #333; }
+.card-body { padding: 10px 18px 18px; min-height: 300px; }
+.card-body.kpi { min-height: auto; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.kpi-value { font-size: 42px; font-weight: 700; color: #1a1a2e; }
+.kpi-label { font-size: 13px; color: #666; margin-top: 4px; }
+table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.data-table th { text-align: left; padding: 8px 10px; border-bottom: 2px solid #e0e0e0; font-weight: 600; color: #555; background: #fafafa; position: sticky; top: 0; }
+table.data-table td { padding: 6px 10px; border-bottom: 1px solid #eee; }
+table.data-table tr:hover td { background: #f0f4ff; }
+.card-body.table-wrap { overflow: auto; max-height: 500px; padding: 0; }
+.pivot-table th { background: #f0f0f0; }
+.error { color: #cc3333; padding: 20px; font-size: 13px; }
+.loading { color: #888; padding: 20px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1 id="dash-title">Loading...</h1>
+    <div class="meta" id="dash-desc"></div>
+  </div>
+  <div style="text-align:right">
+    <div class="meta">finch-epm</div>
+    <div class="staleness" id="global-staleness"></div>
+  </div>
+</div>
+<div class="grid" id="chart-grid"></div>
+
+<script src="/static/echarts.min.js"></script>
+<script>
+(function() {
+  "use strict";
+
+  var dashSpec = null;
+  var queryData = {};
+  var echartInstances = [];
+
+  function init() {
+    fetch("/api/dashboard")
+      .then(function(r) { return r.json(); })
+      .then(function(spec) {
+        dashSpec = spec;
+        document.getElementById("dash-title").textContent = spec.name;
+        document.getElementById("dash-desc").textContent = spec.description || "";
+        document.title = spec.name + " - finch-epm";
+        loadAllQueries(spec);
+      })
+      .catch(function(err) {
+        document.getElementById("dash-title").textContent = "Error loading dashboard";
+        console.error(err);
+      });
+  }
+
+  function loadAllQueries(spec) {
+    var promises = spec.queries.map(function(q) {
+      return fetch("/api/query/" + encodeURIComponent(q.name))
+        .then(function(r) { return r.json(); })
+        .then(function(data) { queryData[q.name] = data; })
+        .catch(function(err) { queryData[q.name] = { error: String(err) }; });
+    });
+
+    Promise.all(promises).then(function() {
+      renderCharts(spec);
+      updateStaleness();
+    });
+  }
+
+  function renderCharts(spec) {
+    var grid = document.getElementById("chart-grid");
+    grid.innerHTML = "";
+
+    spec.charts.forEach(function(chart, idx) {
+      var card = document.createElement("div");
+      card.className = "card";
+
+      var header = document.createElement("div");
+      header.className = "card-header";
+      header.textContent = chart.title || chart.type;
+      card.appendChild(header);
+
+      var body = document.createElement("div");
+      var data = queryData[chart.data];
+
+      if (!data) {
+        body.className = "card-body";
+        body.innerHTML = '<div class="error">No data for query: ' + chart.data + '</div>';
+      } else if (data.error) {
+        body.className = "card-body";
+        body.innerHTML = '<div class="error">' + data.error + '</div>';
+      } else {
+        var renderer = chartRenderers[chart.type];
+        if (renderer) {
+          renderer(body, chart, data, idx);
+        } else {
+          body.className = "card-body";
+          body.innerHTML = '<div class="error">Unknown chart type: ' + chart.type + '</div>';
+        }
+      }
+
+      card.appendChild(body);
+      grid.appendChild(card);
+    });
+  }
+
+  function updateStaleness() {
+    var el = document.getElementById("global-staleness");
+    var oldest = null;
+    var level = "fresh";
+    for (var key in queryData) {
+      var d = queryData[key];
+      if (d && d.staleness) {
+        if (d.staleness.level === "missing") level = "missing";
+        else if (d.staleness.level === "stale" && level !== "missing") level = "stale";
+        if (d.staleness.last_synced_at) {
+          var ts = new Date(d.staleness.last_synced_at);
+          if (!oldest || ts < oldest) oldest = ts;
+        }
+      }
+    }
+    if (oldest) {
+      el.textContent = "Data as of: " + oldest.toLocaleString();
+    }
+    el.className = "staleness " + level;
+  }
+
+  // -- Chart renderers --
+
+  var chartRenderers = {};
+
+  chartRenderers.bar = function(body, chart, data, idx) {
+    body.className = "card-body";
+    body.id = "chart-" + idx;
+    var xCol = chart.x;
+    var yCol = chart.y;
+    var xi = data.column_names.indexOf(xCol);
+    var yi = data.column_names.indexOf(yCol);
+    if (xi < 0 || yi < 0) { body.innerHTML = '<div class="error">Columns not found: ' + xCol + ', ' + yCol + '</div>'; return; }
+
+    var xData = data.rows.map(function(r) { return r[xi]; });
+    var yData = data.rows.map(function(r) { return Number(r[yi]) || 0; });
+
+    var ec = echarts.init(body);
+    echartInstances.push(ec);
+    ec.setOption({
+      tooltip: { trigger: "axis" },
+      xAxis: { type: "category", data: xData, axisLabel: { rotate: xData.length > 8 ? 30 : 0 } },
+      yAxis: { type: "value" },
+      series: [{ type: "bar", data: yData, itemStyle: { color: "#4a6cf7" } }],
+      grid: { left: 60, right: 20, top: 20, bottom: 40 }
+    });
+  };
+
+  chartRenderers.line = function(body, chart, data, idx) {
+    body.className = "card-body";
+    body.id = "chart-" + idx;
+    var xCol = chart.x;
+    var yCol = chart.y;
+    var xi = data.column_names.indexOf(xCol);
+    var yi = data.column_names.indexOf(yCol);
+    if (xi < 0 || yi < 0) { body.innerHTML = '<div class="error">Columns not found</div>'; return; }
+
+    var ec = echarts.init(body);
+    echartInstances.push(ec);
+    ec.setOption({
+      tooltip: { trigger: "axis" },
+      xAxis: { type: "category", data: data.rows.map(function(r) { return r[xi]; }) },
+      yAxis: { type: "value" },
+      series: [{ type: "line", data: data.rows.map(function(r) { return Number(r[yi]) || 0; }), smooth: true, itemStyle: { color: "#4a6cf7" } }],
+      grid: { left: 60, right: 20, top: 20, bottom: 40 }
+    });
+  };
+
+  chartRenderers.area = function(body, chart, data, idx) {
+    body.className = "card-body";
+    body.id = "chart-" + idx;
+    var xCol = chart.x;
+    var yCol = chart.y;
+    var xi = data.column_names.indexOf(xCol);
+    var yi = data.column_names.indexOf(yCol);
+    if (xi < 0 || yi < 0) { body.innerHTML = '<div class="error">Columns not found</div>'; return; }
+
+    var ec = echarts.init(body);
+    echartInstances.push(ec);
+    ec.setOption({
+      tooltip: { trigger: "axis" },
+      xAxis: { type: "category", data: data.rows.map(function(r) { return r[xi]; }) },
+      yAxis: { type: "value" },
+      series: [{ type: "line", data: data.rows.map(function(r) { return Number(r[yi]) || 0; }), areaStyle: { color: "rgba(74,108,247,0.15)" }, smooth: true, itemStyle: { color: "#4a6cf7" } }],
+      grid: { left: 60, right: 20, top: 20, bottom: 40 }
+    });
+  };
+
+  chartRenderers.scatter = function(body, chart, data, idx) {
+    body.className = "card-body";
+    body.id = "chart-" + idx;
+    var xCol = chart.x;
+    var yCol = chart.y;
+    var xi = data.column_names.indexOf(xCol);
+    var yi = data.column_names.indexOf(yCol);
+    if (xi < 0 || yi < 0) { body.innerHTML = '<div class="error">Columns not found</div>'; return; }
+
+    var ec = echarts.init(body);
+    echartInstances.push(ec);
+    ec.setOption({
+      tooltip: { trigger: "item" },
+      xAxis: { type: "value", name: xCol },
+      yAxis: { type: "value", name: yCol },
+      series: [{ type: "scatter", data: data.rows.map(function(r) { return [Number(r[xi]) || 0, Number(r[yi]) || 0]; }), itemStyle: { color: "#4a6cf7" } }],
+      grid: { left: 60, right: 20, top: 20, bottom: 40 }
+    });
+  };
+
+  chartRenderers.timeseries = function(body, chart, data, idx) {
+    body.className = "card-body";
+    body.id = "chart-" + idx;
+    var timeCol = chart.time;
+    var yCol = chart.y;
+    var ti = data.column_names.indexOf(timeCol);
+    var yi = data.column_names.indexOf(yCol);
+    if (ti < 0 || yi < 0) { body.innerHTML = '<div class="error">Columns not found</div>'; return; }
+
+    var ec = echarts.init(body);
+    echartInstances.push(ec);
+    ec.setOption({
+      tooltip: { trigger: "axis" },
+      xAxis: { type: "time" },
+      yAxis: { type: "value" },
+      series: [{ type: "line", data: data.rows.map(function(r) { return [r[ti], Number(r[yi]) || 0]; }), smooth: true, itemStyle: { color: "#4a6cf7" } }],
+      grid: { left: 60, right: 20, top: 20, bottom: 40 }
+    });
+  };
+
+  chartRenderers.kpi = function(body, chart, data) {
+    body.className = "card-body kpi";
+    var valCol = chart.value;
+    var vi = data.column_names.indexOf(valCol);
+    if (vi < 0 || !data.rows.length) { body.innerHTML = '<div class="error">No data</div>'; return; }
+
+    var val = data.rows[0][vi];
+    var num = Number(val);
+    var formatted = isNaN(num) ? String(val) : num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+    var container = document.createElement("div");
+    container.style.textAlign = "center";
+    var valDiv = document.createElement("div");
+    valDiv.className = "kpi-value";
+    valDiv.textContent = formatted;
+    container.appendChild(valDiv);
+    if (chart.label) {
+      var labelDiv = document.createElement("div");
+      labelDiv.className = "kpi-label";
+      labelDiv.textContent = chart.label;
+      container.appendChild(labelDiv);
+    }
+    body.appendChild(container);
+  };
+
+  chartRenderers.table = function(body, chart, data) {
+    body.className = "card-body table-wrap";
+    if (!data.rows.length) { body.innerHTML = '<div class="loading">No data</div>'; return; }
+
+    var table = document.createElement("table");
+    table.className = "data-table";
+    var thead = document.createElement("thead");
+    var headerRow = document.createElement("tr");
+    data.column_names.forEach(function(col) {
+      var th = document.createElement("th");
+      th.textContent = col;
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement("tbody");
+    data.rows.forEach(function(row) {
+      var tr = document.createElement("tr");
+      row.forEach(function(cell, ci) {
+        var td = document.createElement("td");
+        var val = cell;
+        if (val !== null && val !== undefined) {
+          var num = Number(val);
+          if (!isNaN(num) && String(val).match(/^-?\d/)) {
+            td.style.textAlign = "right";
+            td.textContent = num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+          } else {
+            td.textContent = String(val);
+          }
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    body.appendChild(table);
+  };
+
+  chartRenderers.pivot = function(body, chart, data) {
+    body.className = "card-body table-wrap";
+    if (!data.rows.length) { body.innerHTML = '<div class="loading">No data</div>'; return; }
+
+    var rowFields = chart.rows || [];
+    var valueFields = chart.values || [];
+    var colField = chart.columns;
+
+    if (!rowFields.length || !valueFields.length) {
+      // Fall back to regular table
+      chartRenderers.table(body, chart, data);
+      return;
+    }
+
+    // Simple pivot: group by row fields, aggregate value fields
+    var groups = {};
+    var rowIndices = rowFields.map(function(f) { return data.column_names.indexOf(f); });
+    var valIndices = valueFields.map(function(f) { return data.column_names.indexOf(f); });
+
+    data.rows.forEach(function(row) {
+      var key = rowIndices.map(function(i) { return row[i]; }).join("|||");
+      if (!groups[key]) {
+        groups[key] = { labels: rowIndices.map(function(i) { return row[i]; }), values: valIndices.map(function() { return 0; }) };
+      }
+      valIndices.forEach(function(vi, j) {
+        groups[key].values[j] += Number(row[vi]) || 0;
+      });
+    });
+
+    var table = document.createElement("table");
+    table.className = "data-table pivot-table";
+    var thead = document.createElement("thead");
+    var hr = document.createElement("tr");
+    rowFields.concat(valueFields).forEach(function(f) {
+      var th = document.createElement("th");
+      th.textContent = f;
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    var tbody = document.createElement("tbody");
+    Object.keys(groups).sort().forEach(function(key) {
+      var g = groups[key];
+      var tr = document.createElement("tr");
+      g.labels.forEach(function(l) {
+        var td = document.createElement("td");
+        td.textContent = String(l);
+        tr.appendChild(td);
+      });
+      g.values.forEach(function(v) {
+        var td = document.createElement("td");
+        td.style.textAlign = "right";
+        td.textContent = v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    body.appendChild(table);
+  };
+
+  // Handle window resize
+  window.addEventListener("resize", function() {
+    echartInstances.forEach(function(ec) { ec.resize(); });
+  });
+
+  // Auto-refresh every 30 seconds
+  setInterval(function() {
+    if (dashSpec) {
+      loadAllQueries(dashSpec);
+    }
+  }, 30000);
+
+  // Start
+  init();
+
+})();
+</script>
+</body>
+</html>
