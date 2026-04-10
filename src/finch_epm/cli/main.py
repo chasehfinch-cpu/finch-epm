@@ -24,6 +24,8 @@ def _make_connector(connector_type: str, profile_name: str) -> ConnectorBase:
         import finch_epm.connectors.netsuite.connector  # noqa: F401
     elif connector_type == "sqlserver":
         import finch_epm.connectors.sqlserver.connector  # noqa: F401
+    elif connector_type == "postgres":
+        import finch_epm.connectors.postgres.connector  # noqa: F401
     elif connector_type == "fake":
         import finch_epm.connectors.fake  # noqa: F401
 
@@ -126,6 +128,8 @@ def _import_credentials(
         _import_netsuite(pm, profile, env_vars, key_file)
     elif connector == "sqlserver":
         _import_sqlserver(pm, profile, env_vars)
+    elif connector == "postgres":
+        _import_postgres(pm, profile, env_vars)
     else:
         click.echo(f"Credential import not yet supported for: {connector}")
 
@@ -232,6 +236,43 @@ def _import_sqlserver(
     click.echo(f"Run 'finch-epm auth -c sqlserver -p {profile} --validate' to test.")
 
 
+def _import_postgres(
+    pm: "ProfileManager",
+    profile: str,
+    env_vars: dict[str, str],
+) -> None:
+    """Import PostgreSQL credentials into keyring."""
+    host = env_vars.get("PG_HOST", env_vars.get("POSTGRES_HOST", "localhost"))
+    port = env_vars.get("PG_PORT", env_vars.get("POSTGRES_PORT", "5432"))
+    database = env_vars.get("PG_DATABASE", env_vars.get("POSTGRES_DATABASE", ""))
+    username = env_vars.get("PG_USER", env_vars.get("POSTGRES_USER", ""))
+    password = env_vars.get("PG_PASSWORD", env_vars.get("POSTGRES_PASSWORD", ""))
+
+    if not database:
+        click.echo("Error: Missing PG_DATABASE (or POSTGRES_DATABASE) in .env")
+        raise SystemExit(1)
+    if not password:
+        click.echo("Error: Missing PG_PASSWORD (or POSTGRES_PASSWORD) in .env")
+        raise SystemExit(1)
+
+    pm.set_config("postgres", profile, {
+        "host": host,
+        "port": port,
+        "database": database,
+        "username": username,
+    })
+    pm.set_secret("postgres", profile, "password", password)
+
+    click.echo(f"PostgreSQL credentials stored for profile '{profile}':")
+    click.echo(f"  Host:     {host}:{port}")
+    click.echo(f"  Database: {database}")
+    click.echo(f"  Username: {username}")
+    click.echo(f"  Password: stored in OS keychain")
+    click.echo()
+    click.echo("The .env file is no longer needed by finch-epm.")
+    click.echo(f"Run 'finch-epm auth -c postgres -p {profile} --validate' to test.")
+
+
 def _validate_credentials(connector: str, profile: str) -> None:
     """Test stored credentials against the live service."""
     from finch_epm.profiles.manager import ProfileManager
@@ -272,9 +313,10 @@ def _validate_credentials(connector: str, profile: str) -> None:
             raise SystemExit(1)
 
         authenticator.close()
-    elif connector == "sqlserver":
-        click.echo(f"Validating SQL Server credentials for profile '{profile}'...")
-        conn = _make_connector("sqlserver", profile)
+    elif connector in ("sqlserver", "postgres"):
+        label = "SQL Server" if connector == "sqlserver" else "PostgreSQL"
+        click.echo(f"Validating {label} credentials for profile '{profile}'...")
+        conn = _make_connector(connector, profile)
         try:
             conn.connect()
             if conn.validate_credentials():
@@ -580,7 +622,7 @@ def setup() -> None:
     # Step 1: Choose connector
     connector = click.prompt(
         "Which data source?",
-        type=click.Choice(["netsuite", "sqlserver"]),
+        type=click.Choice(["netsuite", "sqlserver", "postgres"]),
         default="netsuite",
     )
 
@@ -605,6 +647,13 @@ def setup() -> None:
     elif connector == "sqlserver":
         click.echo("  You need a .env file with: AZURE_SQL_SERVER, AZURE_SQL_DATABASE,")
         click.echo("  AZURE_SQL_USER, AZURE_SQL_PASSWORD")
+        env_file = click.prompt("  Path to .env file")
+        ctx = click.get_current_context()
+        ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,
+                   key_file=None, validate=False)
+    elif connector == "postgres":
+        click.echo("  You need a .env file with: PG_HOST, PG_PORT, PG_DATABASE,")
+        click.echo("  PG_USER, PG_PASSWORD")
         env_file = click.prompt("  Path to .env file")
         ctx = click.get_current_context()
         ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,

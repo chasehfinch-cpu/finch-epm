@@ -6,23 +6,29 @@ finch-epm lets you connect to NetSuite (and, over time, any structured data sour
 
 ## Current status
 
-finch-epm is in active development. The data pipeline is functional. The dashboard visual layer is not yet built.
+finch-epm is in active development. v0.1 is complete and v0.2 connectors are shipping.
 
 **What works today:**
 
 - NetSuite connector with OAuth 2.0 certificate authentication
+- SQL Server connector (Azure SQL and on-premises) via pyodbc
+- PostgreSQL connector via psycopg2
 - Exhaustive schema introspection (probes all 200+ standard NetSuite record types)
 - Local DuckDB catalog that persists schema metadata between sessions
 - Local DuckDB cache with incremental sync and watermark tracking
-- CLI commands: `auth`, `catalog`, `sync`
-- 96 passing tests
+- `.fdash` dashboard parser, resolver, and web renderer
+- Interactive charts via Apache ECharts: bar, line, area, scatter, time series, KPI, table, pivot
+- Multi-series support, color customization, and layout control
+- CLI commands: `setup`, `auth`, `catalog`, `sync`, `open`
+- 125 passing tests
+- AI-readable dashboard specification (DASHBOARDS.md) for generating dashboards with ChatGPT, Claude, or any AI
 
 **What is not yet built:**
 
-- `.fdash` dashboard parser and resolver
-- Local web server and chart rendering
-- `setup` wizard and `open` command
-- SQL Server and Postgres connectors (v0.2)
+- Desktop installer (v0.2 planned)
+- Scheduled background sync (v0.2 planned)
+- Dashboard cross-filtering (v0.2 planned)
+- Federated query mode for Snowflake/BigQuery (v0.3 planned)
 
 ## What it is
 

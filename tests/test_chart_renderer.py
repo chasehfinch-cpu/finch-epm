@@ -82,3 +82,30 @@ class TestRenderers:
         cols = renderer.get_required_columns({"x": "site", "y": "revenue"})
         assert "site" in cols
         assert "revenue" in cols
+
+    def test_bar_accepts_y_as_list(self) -> None:
+        renderer = get_chart_renderer("bar")
+        errors = renderer.validate_spec({"data": "q", "x": "a", "y": ["b", "c"]})
+        assert errors == []
+
+    def test_bar_rejects_empty_y_list(self) -> None:
+        renderer = get_chart_renderer("bar")
+        errors = renderer.validate_spec({"data": "q", "x": "a", "y": []})
+        assert len(errors) > 0
+
+    def test_multi_series_required_columns(self) -> None:
+        renderer = get_chart_renderer("bar")
+        cols = renderer.get_required_columns({"x": "site", "y": ["revenue", "expense"]})
+        assert "site" in cols
+        assert "revenue" in cols
+        assert "expense" in cols
+
+    def test_line_accepts_y_as_list(self) -> None:
+        renderer = get_chart_renderer("line")
+        errors = renderer.validate_spec({"data": "q", "x": "a", "y": ["b", "c"]})
+        assert errors == []
+
+    def test_timeseries_accepts_y_as_list(self) -> None:
+        renderer = get_chart_renderer("timeseries")
+        errors = renderer.validate_spec({"data": "q", "time": "t", "y": ["a", "b"]})
+        assert errors == []

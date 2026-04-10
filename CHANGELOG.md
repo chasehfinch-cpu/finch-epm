@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.2.1-dev (2026-04-10)
+
+### Added
+
+- **PostgreSQL connector**: Full ConnectorBase implementation via psycopg2. INFORMATION_SCHEMA-based introspection, heuristic dimension detection, pg-specific type mapping. Supports standard PostgreSQL and cloud-hosted instances (AWS RDS, Azure, Google Cloud SQL).
+- **Multi-series charts**: `y` field accepts a list of column names for bar, line, area, and time series charts. Each series gets its own color and legend entry.
+- **Color customization**: `colors` field (list of hex strings) for per-series colors. `color` field (single string) for single-series and KPI tiles. Default 8-color palette when no colors specified.
+- **Chart sizing**: `height` field (integer, pixels) and `width` field ("full" or "half") on any chart type. KPI tiles auto-size to their content.
+- **KPI formatting**: `format` ("currency", "percent", "number"), `prefix`, `suffix`, and `color` fields on KPI tiles.
+- **Table column formatting**: `columns` field with per-column format specs for currency, percent, and number display.
+- **DASHBOARDS.md**: Complete AI-readable specification for the .fdash dashboard format. Designed to be pasted into ChatGPT, Claude, or any AI assistant to generate valid dashboards. Documents all 8 chart types with every field, SQL patterns for common dashboards, and rules for AI generators.
+- **Better axis formatting**: Large numbers auto-format as K/M on chart axes.
+- **Legend support**: Automatic legend for multi-series charts.
+
+### Changed
+
+- Test count increased from 115 to 125.
+- ECharts rendering refactored: two-phase init (DOM insertion, then chart creation) fixes blank chart issue.
+- Optional dependency for PostgreSQL: `pip install finch-epm[postgres]`.
+
 ## v0.2.0-dev (2026-04-10)
 
 ### Added

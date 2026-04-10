@@ -1,7 +1,12 @@
 """Built-in chart renderers for v0.1.
 
-Each renderer is a stub that produces minimal valid output. Full rendering
-logic will be implemented when the web server and frontend are built out.
+Each renderer validates chart specs from .fdash files. Actual rendering
+happens client-side in the JavaScript frontend (dashboard.html).
+
+Supported optional fields on all chart types:
+    height: int (pixels, default 360)
+    width: "full" or "half" (default "half")
+    colors: list of hex color strings (for multi-series)
 """
 
 from __future__ import annotations
@@ -12,6 +17,16 @@ from typing import ClassVar
 from finch_epm.dashboard.renderer.base import ChartRenderer
 from finch_epm.dashboard.renderer.registry import register_chart
 from finch_epm.dashboard.renderer.types import RenderContext, RenderOutput
+
+
+def _normalize_y(chart_spec: dict) -> list[str]:
+    """Extract y field(s) as a list, handling both string and list input."""
+    y = chart_spec.get("y")
+    if y is None:
+        return []
+    if isinstance(y, list):
+        return y
+    return [y]
 
 
 class _BuiltinRenderer(ChartRenderer):
@@ -53,14 +68,17 @@ class BarRenderer(_BuiltinRenderer):
             errors.append("bar: 'x' field is required")
         if "y" not in chart_spec:
             errors.append("bar: 'y' field is required")
+        else:
+            y = chart_spec["y"]
+            if isinstance(y, list) and len(y) == 0:
+                errors.append("bar: 'y' list must not be empty")
         return errors
 
     def get_required_columns(self, chart_spec: dict) -> list[str]:
         cols = []
         if "x" in chart_spec:
             cols.append(chart_spec["x"])
-        if "y" in chart_spec:
-            cols.append(chart_spec["y"])
+        cols.extend(_normalize_y(chart_spec))
         return cols
 
 
@@ -80,8 +98,7 @@ class LineRenderer(_BuiltinRenderer):
         cols = []
         if "x" in chart_spec:
             cols.append(chart_spec["x"])
-        if "y" in chart_spec:
-            cols.append(chart_spec["y"])
+        cols.extend(_normalize_y(chart_spec))
         return cols
 
 
@@ -101,12 +118,21 @@ class AreaRenderer(_BuiltinRenderer):
         cols = []
         if "x" in chart_spec:
             cols.append(chart_spec["x"])
-        if "y" in chart_spec:
-            cols.append(chart_spec["y"])
+        cols.extend(_normalize_y(chart_spec))
         return cols
 
 
 class KpiRenderer(_BuiltinRenderer):
+    """KPI tile renderer.
+
+    Optional fields:
+        format: "currency", "percent", or "number"
+        prefix: string prepended to the value (e.g. "$")
+        suffix: string appended to the value (e.g. "%")
+        color: hex color for the value text
+        label: descriptive text below the value
+    """
+
     chart_type: ClassVar[str] = "kpi"
     display_name: ClassVar[str] = "KPI Tile"
 
@@ -152,8 +178,7 @@ class TimeseriesRenderer(_BuiltinRenderer):
         cols = []
         if "time" in chart_spec:
             cols.append(chart_spec["time"])
-        if "y" in chart_spec:
-            cols.append(chart_spec["y"])
+        cols.extend(_normalize_y(chart_spec))
         return cols
 
 
@@ -173,8 +198,7 @@ class ScatterRenderer(_BuiltinRenderer):
         cols = []
         if "x" in chart_spec:
             cols.append(chart_spec["x"])
-        if "y" in chart_spec:
-            cols.append(chart_spec["y"])
+        cols.extend(_normalize_y(chart_spec))
         return cols
 
 

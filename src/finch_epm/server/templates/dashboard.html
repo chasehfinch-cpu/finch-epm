@@ -15,25 +15,23 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helve
 .staleness.missing { color: #cc3333; }
 .grid { display: flex; flex-wrap: wrap; gap: 16px; padding: 20px 24px; }
 .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; display: flex; flex-direction: column; }
-.card.card-chart { flex: 1 1 calc(50% - 8px); min-width: 400px; }
-.card.card-kpi { flex: 0 0 auto; min-width: 180px; max-width: 280px; }
-.card.card-table { flex: 1 1 calc(50% - 8px); min-width: 400px; }
+.card-full { flex: 1 1 100%; }
+.card-half { flex: 1 1 calc(50% - 8px); min-width: 400px; }
+.card-kpi { flex: 0 0 auto; min-width: 160px; max-width: 260px; }
 .card-header { padding: 14px 18px 8px; font-size: 14px; font-weight: 600; color: #333; }
 .chart-container { width: 100%; height: 360px; padding: 0 8px 8px; }
-.card-kpi .card-body { display: flex; align-items: center; justify-content: center; padding: 20px 24px; }
-.kpi-value { font-size: 48px; font-weight: 700; color: #1a1a2e; line-height: 1; }
-.kpi-label { font-size: 13px; color: #666; margin-top: 6px; }
-table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-table.data-table th { text-align: left; padding: 8px 12px; border-bottom: 2px solid #e0e0e0; font-weight: 600; color: #555; background: #fafafa; position: sticky; top: 0; white-space: nowrap; }
-table.data-table td { padding: 6px 12px; border-bottom: 1px solid #eee; }
-table.data-table tr:hover td { background: #f0f4ff; }
+.kpi-body { display: flex; align-items: center; justify-content: center; padding: 20px 24px; text-align: center; }
+.kpi-value { font-size: 44px; font-weight: 700; color: #1a1a2e; line-height: 1; }
+.kpi-label { font-size: 12px; color: #666; margin-top: 6px; }
+table.dt { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.dt th { text-align: left; padding: 8px 12px; border-bottom: 2px solid #e0e0e0; font-weight: 600; color: #555; background: #fafafa; position: sticky; top: 0; white-space: nowrap; }
+table.dt td { padding: 6px 12px; border-bottom: 1px solid #eee; font-variant-numeric: tabular-nums; }
+table.dt tr:hover td { background: #f0f4ff; }
 .table-wrap { overflow: auto; max-height: 420px; }
-.pivot-table th { background: #f0f0f0; }
 .error { color: #cc3333; padding: 20px; font-size: 13px; }
-.loading { color: #888; padding: 20px; font-size: 13px; }
 @media (max-width: 900px) {
-  .card.card-chart, .card.card-table { flex: 1 1 100%; min-width: 0; }
-  .card.card-kpi { flex: 1 1 calc(50% - 8px); max-width: none; }
+  .card-half { flex: 1 1 100%; min-width: 0; }
+  .card-kpi { flex: 1 1 calc(50% - 8px); max-width: none; }
 }
 </style>
 </head>
@@ -55,105 +53,76 @@ table.data-table tr:hover td { background: #f0f4ff; }
 (function() {
   "use strict";
 
+  var PALETTE = ["#4a6cf7","#f74a4a","#2ecc71","#f7a94a","#9b59b6","#1abc9c","#e67e22","#3498db"];
   var dashSpec = null;
   var queryData = {};
   var echartInstances = [];
 
   function init() {
-    fetch("/api/dashboard")
-      .then(function(r) { return r.json(); })
-      .then(function(spec) {
-        dashSpec = spec;
-        document.getElementById("dash-title").textContent = spec.name;
-        document.getElementById("dash-desc").textContent = spec.description || "";
-        document.title = spec.name + " - finch-epm";
-        loadAllQueries(spec);
-      })
-      .catch(function(err) {
-        document.getElementById("dash-title").textContent = "Error loading dashboard";
-        console.error(err);
-      });
+    fetch("/api/dashboard").then(function(r){return r.json();}).then(function(spec) {
+      dashSpec = spec;
+      document.getElementById("dash-title").textContent = spec.name;
+      document.getElementById("dash-desc").textContent = spec.description || "";
+      document.title = spec.name + " - finch-epm";
+      loadAll(spec);
+    });
   }
 
-  function loadAllQueries(spec) {
-    var promises = spec.queries.map(function(q) {
+  function loadAll(spec) {
+    Promise.all(spec.queries.map(function(q) {
       return fetch("/api/query/" + encodeURIComponent(q.name))
-        .then(function(r) { return r.json(); })
-        .then(function(data) { queryData[q.name] = data; })
-        .catch(function(err) { queryData[q.name] = { error: String(err) }; });
-    });
-
-    Promise.all(promises).then(function() {
-      renderCharts(spec);
-      updateStaleness();
-    });
+        .then(function(r){return r.json();})
+        .then(function(d){queryData[q.name]=d;})
+        .catch(function(e){queryData[q.name]={error:String(e)};});
+    })).then(function(){ render(spec); updateStaleness(); });
   }
 
-  function renderCharts(spec) {
+  function render(spec) {
     var grid = document.getElementById("chart-grid");
     grid.innerHTML = "";
     echartInstances = [];
+    var deferred = [];
 
-    // Phase 1: Build all DOM elements and add to grid
-    var deferredCharts = [];
+    spec.charts.forEach(function(ch, idx) {
+      var isKpi = ch.type === "kpi";
+      var isTable = ch.type === "table" || ch.type === "pivot";
+      var isEC = !isKpi && !isTable;
+      var w = ch.width || (isKpi ? "kpi" : "half");
 
-    spec.charts.forEach(function(chart, idx) {
       var card = document.createElement("div");
-      var isKpi = chart.type === "kpi";
-      var isTable = chart.type === "table" || chart.type === "pivot";
-      var isEChart = !isKpi && !isTable;
-      card.className = "card " + (isKpi ? "card-kpi" : isTable ? "card-table" : "card-chart");
+      card.className = "card " + (w === "full" ? "card-full" : w === "kpi" ? "card-kpi" : "card-half");
 
-      var header = document.createElement("div");
-      header.className = "card-header";
-      header.textContent = chart.title || chart.type;
-      card.appendChild(header);
+      var hdr = document.createElement("div");
+      hdr.className = "card-header";
+      hdr.textContent = ch.title || ch.type;
+      card.appendChild(hdr);
 
-      var data = queryData[chart.data];
-
-      if (!data) {
-        var errDiv = document.createElement("div");
-        errDiv.className = "error";
-        errDiv.textContent = "No data for query: " + chart.data;
-        card.appendChild(errDiv);
-      } else if (data.error) {
-        var errDiv2 = document.createElement("div");
-        errDiv2.className = "error";
-        errDiv2.textContent = data.error;
-        card.appendChild(errDiv2);
-      } else if (isEChart) {
-        // Create container now, init ECharts in phase 2 after DOM insertion
-        var container = document.createElement("div");
-        container.className = "chart-container";
-        container.id = "chart-" + idx;
-        card.appendChild(container);
-        deferredCharts.push({ chart: chart, data: data, containerId: "chart-" + idx });
+      var data = queryData[ch.data];
+      if (!data || data.error) {
+        var e = document.createElement("div");
+        e.className = "error";
+        e.textContent = data ? data.error : "No data for: " + ch.data;
+        card.appendChild(e);
+      } else if (isEC) {
+        var c = document.createElement("div");
+        c.className = "chart-container";
+        c.id = "ec-" + idx;
+        if (ch.height) c.style.height = ch.height + "px";
+        card.appendChild(c);
+        deferred.push({ch:ch, data:data, id:"ec-"+idx});
       } else {
-        var renderer = chartRenderers[chart.type];
-        if (renderer) {
-          renderer(card, chart, data, idx);
-        } else {
-          var errDiv3 = document.createElement("div");
-          errDiv3.className = "error";
-          errDiv3.textContent = "Unknown chart type: " + chart.type;
-          card.appendChild(errDiv3);
-        }
+        domRenderers[ch.type](card, ch, data);
       }
-
       grid.appendChild(card);
     });
 
-    // Phase 2: Init ECharts after all elements are in the DOM with dimensions
     requestAnimationFrame(function() {
-      deferredCharts.forEach(function(item) {
-        var container = document.getElementById(item.containerId);
-        if (container && container.offsetWidth > 0) {
-          var ec = echarts.init(container);
+      deferred.forEach(function(item) {
+        var el = document.getElementById(item.id);
+        if (el && el.offsetWidth > 0) {
+          var ec = echarts.init(el);
           echartInstances.push(ec);
-          var builder = echartBuilders[item.chart.type];
-          if (builder) {
-            builder(ec, item.chart, item.data);
-          }
+          ecBuilders[item.ch.type](ec, item.ch, item.data);
         }
       });
     });
@@ -161,10 +130,9 @@ table.data-table tr:hover td { background: #f0f4ff; }
 
   function updateStaleness() {
     var el = document.getElementById("global-staleness");
-    var oldest = null;
-    var level = "fresh";
-    for (var key in queryData) {
-      var d = queryData[key];
+    var oldest = null, level = "fresh";
+    for (var k in queryData) {
+      var d = queryData[k];
       if (d && d.staleness) {
         if (d.staleness.level === "missing") level = "missing";
         else if (d.staleness.level === "stale" && level !== "missing") level = "stale";
@@ -174,144 +142,161 @@ table.data-table tr:hover td { background: #f0f4ff; }
         }
       }
     }
-    if (oldest) {
-      el.textContent = "Data as of: " + oldest.toLocaleString();
-    }
+    if (oldest) el.textContent = "Data as of: " + oldest.toLocaleString();
     el.className = "staleness " + level;
   }
 
-  // -- ECharts option builders (called in phase 2, after DOM insertion) --
-  var echartBuilders = {};
+  // -- helpers --
+  function col(data, name) { return data.column_names.indexOf(name); }
+  function getColors(ch, count) {
+    if (ch.colors && ch.colors.length) return ch.colors;
+    if (ch.color) return [ch.color];
+    return PALETTE.slice(0, count);
+  }
+  function yFields(ch) {
+    var y = ch.y;
+    return Array.isArray(y) ? y : (y ? [y] : []);
+  }
+  function fmtNum(v, fmt, prefix, suffix) {
+    var n = Number(v);
+    if (isNaN(n)) return String(v);
+    prefix = prefix || "";
+    suffix = suffix || "";
+    if (fmt === "currency") return prefix + n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + suffix;
+    if (fmt === "percent") return prefix + n.toLocaleString(undefined, {minimumFractionDigits:1, maximumFractionDigits:1}) + suffix;
+    return prefix + n.toLocaleString(undefined, {maximumFractionDigits:2}) + suffix;
+  }
+  function fmtAxis(v) {
+    var n = Number(v);
+    if (isNaN(n)) return v;
+    if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(1) + "M";
+    if (Math.abs(n) >= 1e3) return (n/1e3).toFixed(0) + "K";
+    return n.toLocaleString();
+  }
 
-  echartBuilders.bar = function(ec, chart, data) {
-    var xi = data.column_names.indexOf(chart.x);
-    var yi = data.column_names.indexOf(chart.y);
-    if (xi < 0 || yi < 0) return;
-    var xData = data.rows.map(function(r) { return r[xi]; });
-    var yData = data.rows.map(function(r) { return Number(r[yi]) || 0; });
+  // -- ECharts builders --
+  var ecBuilders = {};
+
+  function buildXYChart(type, ec, ch, data) {
+    var xi = col(data, ch.x);
+    var fields = yFields(ch);
+    if (xi < 0 || !fields.length) return;
+    var colors = getColors(ch, fields.length);
+    var xData = data.rows.map(function(r){return r[xi];});
+    var series = fields.map(function(f, i) {
+      var yi = col(data, f);
+      var s = {
+        name: f,
+        type: type === "area" ? "line" : type,
+        data: data.rows.map(function(r){return Number(r[yi])||0;}),
+        itemStyle: {color: colors[i % colors.length]}
+      };
+      if (type === "bar") { s.barMaxWidth = 50; s.itemStyle.borderRadius = [3,3,0,0]; }
+      if (type === "line") { s.smooth = true; s.symbolSize = 5; s.lineStyle = {width:2}; }
+      if (type === "area") { s.smooth = true; s.lineStyle = {width:2}; s.areaStyle = {opacity:0.15}; }
+      return s;
+    });
+    var opt = {
+      tooltip: {trigger:"axis", axisPointer:{type: type==="bar"?"shadow":"line"}},
+      xAxis: {type:"category", data:xData, axisLabel:{rotate:xData.length>8?35:0, fontSize:11}},
+      yAxis: {type:"value", axisLabel:{fontSize:11, formatter:fmtAxis}},
+      series: series,
+      grid: {left:60, right:16, top: fields.length>1?36:16, bottom: xData.length>8?60:36}
+    };
+    if (fields.length > 1) opt.legend = {data:fields, top:0, textStyle:{fontSize:11}};
+    ec.setOption(opt);
+  }
+
+  ecBuilders.bar = function(ec,ch,data){ buildXYChart("bar",ec,ch,data); };
+  ecBuilders.line = function(ec,ch,data){ buildXYChart("line",ec,ch,data); };
+  ecBuilders.area = function(ec,ch,data){ buildXYChart("area",ec,ch,data); };
+
+  ecBuilders.scatter = function(ec, ch, data) {
+    var xi = col(data, ch.x), yi = col(data, ch.y);
+    if (xi<0||yi<0) return;
+    var colors = getColors(ch, 1);
     ec.setOption({
-      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
-      xAxis: { type: "category", data: xData, axisLabel: { rotate: xData.length > 6 ? 35 : 0, fontSize: 11 } },
-      yAxis: { type: "value", axisLabel: { fontSize: 11 } },
-      series: [{ type: "bar", data: yData, itemStyle: { color: "#4a6cf7", borderRadius: [3, 3, 0, 0] }, barMaxWidth: 50 }],
-      grid: { left: 55, right: 16, top: 16, bottom: xData.length > 6 ? 60 : 36 }
+      tooltip:{trigger:"item"},
+      xAxis:{type:"value", name:ch.x, nameLocation:"center", nameGap:28, axisLabel:{fontSize:11}},
+      yAxis:{type:"value", name:ch.y, axisLabel:{fontSize:11, formatter:fmtAxis}},
+      series:[{type:"scatter", data:data.rows.map(function(r){return[Number(r[xi])||0,Number(r[yi])||0];}), symbolSize:8, itemStyle:{color:colors[0], opacity:0.7}}],
+      grid:{left:60, right:16, top:16, bottom:44}
     });
   };
 
-  echartBuilders.line = function(ec, chart, data) {
-    var xi = data.column_names.indexOf(chart.x);
-    var yi = data.column_names.indexOf(chart.y);
-    if (xi < 0 || yi < 0) return;
-    ec.setOption({
-      tooltip: { trigger: "axis" },
-      xAxis: { type: "category", data: data.rows.map(function(r) { return r[xi]; }), axisLabel: { fontSize: 11 } },
-      yAxis: { type: "value", axisLabel: { fontSize: 11 } },
-      series: [{ type: "line", data: data.rows.map(function(r) { return Number(r[yi]) || 0; }), smooth: true, symbolSize: 6, lineStyle: { width: 2 }, itemStyle: { color: "#4a6cf7" } }],
-      grid: { left: 55, right: 16, top: 16, bottom: 36 }
+  ecBuilders.timeseries = function(ec, ch, data) {
+    var ti = col(data, ch.time);
+    var fields = yFields(ch);
+    if (ti<0||!fields.length) return;
+    var colors = getColors(ch, fields.length);
+    var series = fields.map(function(f,i) {
+      var yi = col(data, f);
+      return {name:f, type:"line", data:data.rows.map(function(r){return[r[ti],Number(r[yi])||0];}), smooth:true, symbolSize:4, lineStyle:{width:2}, itemStyle:{color:colors[i%colors.length]}};
     });
+    var opt = {
+      tooltip:{trigger:"axis"},
+      xAxis:{type:"time", axisLabel:{fontSize:11}},
+      yAxis:{type:"value", axisLabel:{fontSize:11, formatter:fmtAxis}},
+      series:series,
+      grid:{left:60, right:16, top:fields.length>1?36:16, bottom:36}
+    };
+    if (fields.length>1) opt.legend={data:fields, top:0, textStyle:{fontSize:11}};
+    ec.setOption(opt);
   };
 
-  echartBuilders.area = function(ec, chart, data) {
-    var xi = data.column_names.indexOf(chart.x);
-    var yi = data.column_names.indexOf(chart.y);
-    if (xi < 0 || yi < 0) return;
-    ec.setOption({
-      tooltip: { trigger: "axis" },
-      xAxis: { type: "category", data: data.rows.map(function(r) { return r[xi]; }), axisLabel: { fontSize: 11 } },
-      yAxis: { type: "value", axisLabel: { fontSize: 11 } },
-      series: [{ type: "line", data: data.rows.map(function(r) { return Number(r[yi]) || 0; }), areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{offset: 0, color: "rgba(74,108,247,0.25)"}, {offset: 1, color: "rgba(74,108,247,0.02)"}]) }, smooth: true, lineStyle: { width: 2 }, itemStyle: { color: "#4a6cf7" } }],
-      grid: { left: 55, right: 16, top: 16, bottom: 36 }
-    });
-  };
+  // -- DOM renderers --
+  var domRenderers = {};
 
-  echartBuilders.scatter = function(ec, chart, data) {
-    var xi = data.column_names.indexOf(chart.x);
-    var yi = data.column_names.indexOf(chart.y);
-    if (xi < 0 || yi < 0) return;
-    ec.setOption({
-      tooltip: { trigger: "item" },
-      xAxis: { type: "value", name: chart.x, nameLocation: "center", nameGap: 28, axisLabel: { fontSize: 11 } },
-      yAxis: { type: "value", name: chart.y, axisLabel: { fontSize: 11 } },
-      series: [{ type: "scatter", data: data.rows.map(function(r) { return [Number(r[xi]) || 0, Number(r[yi]) || 0]; }), symbolSize: 8, itemStyle: { color: "#4a6cf7", opacity: 0.7 } }],
-      grid: { left: 55, right: 16, top: 16, bottom: 44 }
-    });
-  };
-
-  echartBuilders.timeseries = function(ec, chart, data) {
-    var ti = data.column_names.indexOf(chart.time);
-    var yi = data.column_names.indexOf(chart.y);
-    if (ti < 0 || yi < 0) return;
-    ec.setOption({
-      tooltip: { trigger: "axis" },
-      xAxis: { type: "time", axisLabel: { fontSize: 11 } },
-      yAxis: { type: "value", axisLabel: { fontSize: 11 } },
-      series: [{ type: "line", data: data.rows.map(function(r) { return [r[ti], Number(r[yi]) || 0]; }), smooth: true, symbolSize: 4, lineStyle: { width: 2 }, itemStyle: { color: "#4a6cf7" } }],
-      grid: { left: 55, right: 16, top: 16, bottom: 36 }
-    });
-  };
-
-  // -- DOM-based renderers (KPI, table, pivot -- no ECharts needed) --
-  var chartRenderers = {};
-
-  chartRenderers.kpi = function(card, chart, data) {
-    var vi = data.column_names.indexOf(chart.value);
-    if (vi < 0 || !data.rows.length) { card.innerHTML += '<div class="error">No data</div>'; return; }
-
+  domRenderers.kpi = function(card, ch, data) {
+    var vi = col(data, ch.value);
+    if (vi<0||!data.rows.length){card.innerHTML+='<div class="error">No data</div>';return;}
     var val = data.rows[0][vi];
-    var num = Number(val);
-    var formatted = isNaN(num) ? String(val) : num.toLocaleString(undefined, { maximumFractionDigits: 0 });
-
+    var formatted = fmtNum(val, ch.format, ch.prefix, ch.suffix);
     var body = document.createElement("div");
-    body.className = "card-body";
-    body.style.display = "flex";
-    body.style.alignItems = "center";
-    body.style.justifyContent = "center";
-    body.style.padding = "20px 24px";
-
-    var container = document.createElement("div");
-    container.style.textAlign = "center";
-    var valDiv = document.createElement("div");
-    valDiv.className = "kpi-value";
-    valDiv.textContent = formatted;
-    container.appendChild(valDiv);
-    if (chart.label) {
-      var labelDiv = document.createElement("div");
-      labelDiv.className = "kpi-label";
-      labelDiv.textContent = chart.label;
-      container.appendChild(labelDiv);
+    body.className = "kpi-body";
+    var wrap = document.createElement("div");
+    var vd = document.createElement("div");
+    vd.className = "kpi-value";
+    vd.textContent = formatted;
+    if (ch.color) vd.style.color = ch.color;
+    wrap.appendChild(vd);
+    if (ch.label) {
+      var ld = document.createElement("div");
+      ld.className = "kpi-label";
+      ld.textContent = ch.label;
+      wrap.appendChild(ld);
     }
-    body.appendChild(container);
+    body.appendChild(wrap);
     card.appendChild(body);
   };
 
-  chartRenderers.table = function(card, chart, data) {
+  domRenderers.table = function(card, ch, data) {
     var wrap = document.createElement("div");
     wrap.className = "table-wrap";
-    if (!data.rows.length) { wrap.innerHTML = '<div class="loading">No data</div>'; card.appendChild(wrap); return; }
+    if (ch.height) wrap.style.maxHeight = ch.height + "px";
+    if (!data.rows.length){wrap.innerHTML='<div class="error">No data</div>';card.appendChild(wrap);return;}
 
-    var table = document.createElement("table");
-    table.className = "data-table";
+    var colFmt = ch.columns || {};
+    var t = document.createElement("table");
+    t.className = "dt";
     var thead = document.createElement("thead");
-    var headerRow = document.createElement("tr");
-    data.column_names.forEach(function(col) {
-      var th = document.createElement("th");
-      th.textContent = col;
-      headerRow.appendChild(th);
-    });
-    thead.appendChild(headerRow);
-    table.appendChild(thead);
+    var hr = document.createElement("tr");
+    data.column_names.forEach(function(c){var th=document.createElement("th");th.textContent=c;hr.appendChild(th);});
+    thead.appendChild(hr);
+    t.appendChild(thead);
 
     var tbody = document.createElement("tbody");
     data.rows.forEach(function(row) {
       var tr = document.createElement("tr");
-      row.forEach(function(cell) {
+      row.forEach(function(cell, ci) {
         var td = document.createElement("td");
+        var cname = data.column_names[ci];
+        var cf = colFmt[cname];
         if (cell !== null && cell !== undefined) {
           var num = Number(cell);
           if (!isNaN(num) && String(cell).match(/^-?\d/)) {
             td.style.textAlign = "right";
-            td.style.fontVariantNumeric = "tabular-nums";
-            td.textContent = num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+            td.textContent = cf ? fmtNum(num, cf.format || cf, cf.prefix, cf.suffix) : num.toLocaleString(undefined,{maximumFractionDigits:2});
           } else {
             td.textContent = String(cell);
           }
@@ -320,83 +305,47 @@ table.data-table tr:hover td { background: #f0f4ff; }
       });
       tbody.appendChild(tr);
     });
-    table.appendChild(tbody);
-    wrap.appendChild(table);
+    t.appendChild(tbody);
+    wrap.appendChild(t);
     card.appendChild(wrap);
   };
 
-  chartRenderers.pivot = function(card, chart, data) {
+  domRenderers.pivot = function(card, ch, data) {
     var wrap = document.createElement("div");
     wrap.className = "table-wrap";
-    if (!data.rows.length) { wrap.innerHTML = '<div class="loading">No data</div>'; card.appendChild(wrap); return; }
+    if (!data.rows.length||!ch.rows||!ch.values){domRenderers.table(card,ch,data);return;}
 
-    var rowFields = chart.rows || [];
-    var valueFields = chart.values || [];
-
-    if (!rowFields.length || !valueFields.length) {
-      chartRenderers.table(card, chart, data);
-      return;
-    }
-
+    var ri = ch.rows.map(function(f){return col(data,f);});
+    var vi = ch.values.map(function(f){return col(data,f);});
     var groups = {};
-    var rowIndices = rowFields.map(function(f) { return data.column_names.indexOf(f); });
-    var valIndices = valueFields.map(function(f) { return data.column_names.indexOf(f); });
-
     data.rows.forEach(function(row) {
-      var key = rowIndices.map(function(i) { return row[i]; }).join("|||");
-      if (!groups[key]) {
-        groups[key] = { labels: rowIndices.map(function(i) { return row[i]; }), values: valIndices.map(function() { return 0; }) };
-      }
-      valIndices.forEach(function(vi, j) {
-        groups[key].values[j] += Number(row[vi]) || 0;
-      });
+      var key = ri.map(function(i){return row[i];}).join("|||");
+      if(!groups[key]) groups[key]={labels:ri.map(function(i){return row[i];}), values:vi.map(function(){return 0;})};
+      vi.forEach(function(v,j){groups[key].values[j]+=Number(row[v])||0;});
     });
 
-    var table = document.createElement("table");
-    table.className = "data-table";
+    var t = document.createElement("table");
+    t.className = "dt";
     var thead = document.createElement("thead");
     var hr = document.createElement("tr");
-    rowFields.concat(valueFields).forEach(function(f) {
-      var th = document.createElement("th");
-      th.textContent = f;
-      hr.appendChild(th);
-    });
+    ch.rows.concat(ch.values).forEach(function(f){var th=document.createElement("th");th.textContent=f;hr.appendChild(th);});
     thead.appendChild(hr);
-    table.appendChild(thead);
+    t.appendChild(thead);
 
     var tbody = document.createElement("tbody");
     Object.keys(groups).sort().forEach(function(key) {
-      var g = groups[key];
-      var tr = document.createElement("tr");
-      g.labels.forEach(function(l) {
-        var td = document.createElement("td");
-        td.textContent = String(l);
-        tr.appendChild(td);
-      });
-      g.values.forEach(function(v) {
-        var td = document.createElement("td");
-        td.style.textAlign = "right";
-        td.style.fontVariantNumeric = "tabular-nums";
-        td.textContent = v.toLocaleString(undefined, { maximumFractionDigits: 2 });
-        tr.appendChild(td);
-      });
+      var g=groups[key]; var tr=document.createElement("tr");
+      g.labels.forEach(function(l){var td=document.createElement("td");td.textContent=String(l);tr.appendChild(td);});
+      g.values.forEach(function(v){var td=document.createElement("td");td.style.textAlign="right";td.textContent=v.toLocaleString(undefined,{maximumFractionDigits:2});tr.appendChild(td);});
       tbody.appendChild(tr);
     });
-    table.appendChild(tbody);
-    wrap.appendChild(table);
+    t.appendChild(tbody);
+    wrap.appendChild(t);
     card.appendChild(wrap);
   };
 
-  // Handle window resize
-  window.addEventListener("resize", function() {
-    echartInstances.forEach(function(ec) { ec.resize(); });
-  });
-
-  // Auto-refresh every 30 seconds
-  setInterval(function() {
-    if (dashSpec) { loadAllQueries(dashSpec); }
-  }, 30000);
-
+  window.addEventListener("resize", function(){echartInstances.forEach(function(ec){ec.resize();});});
+  setInterval(function(){if(dashSpec)loadAll(dashSpec);}, 30000);
   init();
 })();
 </script>

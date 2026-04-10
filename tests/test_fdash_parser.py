@@ -152,6 +152,88 @@ queries:
         assert any("chart" in e.lower() for e in errors)
 
 
+class TestMultiSeries:
+    def test_y_as_list(self) -> None:
+        spec = load_fdash_string("""
+name: Multi
+queries:
+  - name: q1
+    sql: SELECT x, a, b FROM t
+charts:
+  - type: bar
+    title: Multi Bar
+    data: q1
+    x: x
+    y: [a, b]
+    colors: ["#ff0000", "#00ff00"]
+""")
+        chart = spec.charts[0]
+        assert chart.config["y"] == ["a", "b"]
+        assert chart.config["colors"] == ["#ff0000", "#00ff00"]
+
+    def test_y_as_string(self) -> None:
+        spec = load_fdash_string(MINIMAL_FDASH)
+        # table chart has no y field, so test with bar
+        bar_spec = load_fdash_string(FULL_FDASH)
+        bar = bar_spec.charts[0]
+        assert bar.config["y"] == "total"
+
+    def test_height_and_width(self) -> None:
+        spec = load_fdash_string("""
+name: Sized
+queries:
+  - name: q1
+    sql: SELECT 1
+charts:
+  - type: bar
+    title: Big Chart
+    data: q1
+    x: a
+    y: b
+    height: 500
+    width: full
+""")
+        chart = spec.charts[0]
+        assert chart.config["height"] == 500
+        assert chart.config["width"] == "full"
+
+    def test_kpi_format(self) -> None:
+        spec = load_fdash_string("""
+name: KPI
+queries:
+  - name: q1
+    sql: SELECT 100 AS val
+charts:
+  - type: kpi
+    title: Revenue
+    data: q1
+    value: val
+    format: currency
+    prefix: "$"
+    color: "#2ecc71"
+""")
+        chart = spec.charts[0]
+        assert chart.config["format"] == "currency"
+        assert chart.config["prefix"] == "$"
+        assert chart.config["color"] == "#2ecc71"
+
+    def test_multi_series_validation_passes(self) -> None:
+        spec = load_fdash_string("""
+name: Valid Multi
+queries:
+  - name: q1
+    sql: SELECT x, a, b FROM t
+charts:
+  - type: bar
+    title: Multi
+    data: q1
+    x: x
+    y: [a, b]
+""")
+        errors = validate_fdash(spec)
+        assert errors == []
+
+
 class TestErrors:
     def test_missing_name(self) -> None:
         with pytest.raises(FdashError, match="name"):
