@@ -27,6 +27,22 @@ sqlserver = [
 postgres = [
     "psycopg2-binary>=2.9",
 ]
+snowflake = [
+    "snowflake-connector-python>=3.0",
+]
+bigquery = [
+    "google-cloud-bigquery>=3.0",
+]
+odbc = [
+    "pyodbc>=5.0",
+]
+all = [
+    "pyodbc>=5.0",
+    "psycopg2-binary>=2.9",
+    "snowflake-connector-python>=3.0",
+    "google-cloud-bigquery>=3.0",
+    "openpyxl>=3.1",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov",

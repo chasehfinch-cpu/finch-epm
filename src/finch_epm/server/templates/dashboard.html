@@ -36,6 +36,8 @@ table.dt tr:hover td { background: #f0f4ff; }
 .filter-group select { font-size: 13px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: #fff; color: #333; min-width: 140px; }
 .cross-filter-badge { display: inline-block; background: #4a6cf7; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 8px; cursor: pointer; }
 .cross-filter-badge:hover { background: #cc3333; }
+.export-btn { float: right; font-size: 11px; color: #888; cursor: pointer; padding: 2px 8px; border: 1px solid #ddd; border-radius: 3px; background: #fafafa; text-decoration: none; }
+.export-btn:hover { background: #eee; color: #333; }
 @media (max-width: 900px) {
   .card-half { flex: 1 1 100%; min-width: 0; }
   .card-kpi { flex: 1 1 calc(50% - 8px); max-width: none; }
@@ -167,14 +169,27 @@ table.dt tr:hover td { background: #f0f4ff; }
       var hdr = document.createElement("div");
       hdr.className = "card-header";
       hdr.textContent = ch.title || ch.type;
+      // Export button
+      var expBtn = document.createElement("a");
+      expBtn.className = "export-btn";
+      expBtn.textContent = "CSV";
+      expBtn.href = "/api/export/" + encodeURIComponent(ch.data);
+      expBtn.title = "Download as CSV";
+      hdr.appendChild(expBtn);
       card.appendChild(hdr);
 
       var data = queryData[ch.data];
       if (!data || data.error) {
         var e = document.createElement("div");
         e.className = "error";
-        e.textContent = data ? data.error : "No data for: " + ch.data;
+        e.textContent = data ? data.error : "No data for query: " + ch.data;
         card.appendChild(e);
+      } else if (data.staleness && data.staleness.level === "missing" && data.row_count === 0) {
+        var m = document.createElement("div");
+        m.className = "error";
+        m.style.color = "#996600";
+        m.innerHTML = "Data not synced yet. Run:<br><code style='background:#f5f5f5;padding:2px 6px;border-radius:3px;font-size:12px'>finch-epm sync -c &lt;connector&gt; -p &lt;profile&gt; -t &lt;table&gt;</code>";
+        card.appendChild(m);
       } else if (isEC) {
         var c = document.createElement("div");
         c.className = "chart-container";

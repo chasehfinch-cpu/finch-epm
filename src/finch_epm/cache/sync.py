@@ -216,6 +216,12 @@ class SyncEngine:
                 row_count=rows_ingested,
             ))
 
+            # Check for truncation (source had more rows than we fetched)
+            truncated = result.truncated
+            total_available = result.total_rows_available
+            if total_available and rows_ingested < total_available:
+                truncated = True
+
             elapsed = time.monotonic() - start
             return TableSyncResult(
                 table_name=table_name,
@@ -223,6 +229,8 @@ class SyncEngine:
                 mode=mode,
                 elapsed_seconds=elapsed,
                 success=True,
+                truncated=truncated,
+                total_available=total_available,
             )
 
         except (ConnectorError, Exception) as e:

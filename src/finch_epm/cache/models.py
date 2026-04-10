@@ -79,6 +79,8 @@ class TableSyncResult:
     elapsed_seconds: float
     success: bool
     error: str | None = None
+    truncated: bool = False
+    total_available: int | None = None
 
 
 @dataclass

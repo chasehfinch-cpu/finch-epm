@@ -54,6 +54,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path.startswith("/api/query/"):
             query_name = path[len("/api/query/"):]
             self._serve_query(query_name, params)
+        elif path.startswith("/api/export/"):
+            query_name = path[len("/api/export/"):]
+            self._serve_export(query_name)
         elif path.startswith("/api/filter/"):
             filter_name = path[len("/api/filter/"):]
             self._serve_filter_options(filter_name)
@@ -201,6 +204,43 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.exception("Filter query failed: %s", filter_name)
             self._send_error(500, f"Filter query failed: {e}")
+
+    def _serve_export(self, query_name: str) -> None:
+        """Export query results as CSV for download."""
+        import csv
+        import io
+
+        spec = self.server.dashboard_spec
+        cache = self.server.cache
+
+        query = spec.get_query(query_name)
+        if query is None:
+            self._send_error(404, f"Query not found: {query_name}")
+            return
+
+        try:
+            results = resolve_queries(spec, cache)
+            result = results.get(query_name)
+            if result is None or not result.rows:
+                self._send_error(404, "No data to export")
+                return
+
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(result.column_names)
+            for row in result.rows:
+                writer.writerow(row)
+
+            content = output.getvalue().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="{query_name}.csv"')
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+        except Exception as e:
+            logger.exception("Export failed: %s", query_name)
+            self._send_error(500, f"Export failed: {e}")
 
     def _serve_staleness(self) -> None:
         # Placeholder -- return basic staleness info

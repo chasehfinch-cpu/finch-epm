@@ -20,14 +20,24 @@ def _make_connector(connector_type: str, profile_name: str) -> ConnectorBase:
     Importing the module triggers the @register_connector decorator
     which populates the registry.
     """
-    if connector_type == "netsuite":
-        import finch_epm.connectors.netsuite.connector  # noqa: F401
-    elif connector_type == "sqlserver":
-        import finch_epm.connectors.sqlserver.connector  # noqa: F401
-    elif connector_type == "postgres":
-        import finch_epm.connectors.postgres.connector  # noqa: F401
-    elif connector_type == "fake":
-        import finch_epm.connectors.fake  # noqa: F401
+    _CONNECTOR_IMPORTS = {
+        "netsuite": "finch_epm.connectors.netsuite.connector",
+        "sqlserver": "finch_epm.connectors.sqlserver.connector",
+        "postgres": "finch_epm.connectors.postgres.connector",
+        "snowflake": "finch_epm.connectors.snowflake.connector",
+        "bigquery": "finch_epm.connectors.bigquery.connector",
+        "odbc": "finch_epm.connectors.odbc.connector",
+        "fake": "finch_epm.connectors.fake",
+    }
+    import importlib
+    module_path = _CONNECTOR_IMPORTS.get(connector_type)
+    if module_path:
+        importlib.import_module(module_path)
+    else:
+        raise click.ClickException(
+            f"Unknown connector type: {connector_type}. "
+            f"Available: {', '.join(sorted(_CONNECTOR_IMPORTS.keys()))}"
+        )
 
     from finch_epm.connectors.registry import get_connector_class
     cls = get_connector_class(connector_type)
@@ -561,6 +571,21 @@ def sync(
         click.echo(f"  Total rows:     {report.total_rows:,}")
         click.echo(f"  Elapsed:        {report.elapsed_seconds:.1f}s")
 
+        # Warn about truncated tables
+        truncated = [r for r in report.per_table if r.truncated]
+        if truncated:
+            click.echo("\nWARNING -- Data truncation detected:")
+            for r in truncated:
+                total = f"{r.total_available:,}" if r.total_available else "unknown"
+                click.echo(
+                    f"  {r.table_name}: synced {r.rows_synced:,} of {total} rows"
+                )
+            click.echo(
+                "\n  The data source limits how many rows can be fetched per query."
+                "\n  To get more data, run sync again with --incremental to fetch"
+                "\n  newer rows, or sync specific date ranges in your .fdash queries."
+            )
+
         if report.errors:
             click.echo("\nErrors:")
             for err in report.errors:
@@ -649,10 +674,34 @@ def open_dashboard(dashboard: str, port: int, no_browser: bool) -> None:
     from finch_epm.paths import cache_db_path
     from finch_epm.server.app import DashboardServer
 
-    cache = LocalCacheEngine(str(cache_db_path()))
     try:
+        cache = LocalCacheEngine(str(cache_db_path()))
+    except Exception as e:
+        if "being used by another process" in str(e):
+            click.echo(
+                "Error: Cache database is locked by another process.\n"
+                "Close any running sync or dashboard server first."
+            )
+        else:
+            click.echo(f"Error opening cache database: {e}")
+        raise SystemExit(1)
+
+    try:
+        from finch_epm.dashboard.fdash import FdashError
         server = DashboardServer(dashboard, cache)
         server.start(port=port, open_browser=not no_browser)
+    except FdashError as e:
+        click.echo(f"Invalid dashboard file: {e}")
+        raise SystemExit(1)
+    except OSError as e:
+        if "Address already in use" in str(e) or "Only one usage" in str(e):
+            click.echo(
+                f"Error: Port {port} is already in use.\n"
+                f"Try a different port: finch-epm open {dashboard} --port {port + 1}"
+            )
+        else:
+            click.echo(f"Server error: {e}")
+        raise SystemExit(1)
     finally:
         cache.close()
 
@@ -684,9 +733,38 @@ def setup() -> None:
         # Step 1: Choose connector
         connector = click.prompt(
             "Which data source?",
-            type=click.Choice(["netsuite", "sqlserver", "postgres"]),
+            type=click.Choice(["netsuite", "sqlserver", "postgres", "snowflake", "bigquery", "odbc"]),
             default="netsuite",
         )
+
+        # Show permission requirements
+        click.echo()
+        if connector == "netsuite":
+            click.echo("  Prerequisites for NetSuite:")
+            click.echo("    1. An Integration record with OAuth 2.0 Client Credentials enabled")
+            click.echo("    2. A certificate (EC or RSA) uploaded to the integration")
+            click.echo("    3. A role with these permissions:")
+            click.echo("       - SuiteQL (under Reports)")
+            click.echo("       - REST Web Services (under Setup)")
+            click.echo("       - Read access on the record types you want to query")
+            click.echo("    4. A .env file with: NS_ACCOUNT_ID, NS_CLIENT_ID, NS_CERTIFICATE_ID")
+            click.echo("    5. The private key PEM file matching the uploaded certificate")
+        elif connector == "sqlserver":
+            click.echo("  Prerequisites for SQL Server:")
+            click.echo("    1. A SQL login with SELECT permissions on target tables")
+            click.echo("    2. SELECT on INFORMATION_SCHEMA (for schema discovery)")
+            click.echo("    3. For Azure SQL: server FQDN (e.g., server.database.windows.net)")
+            click.echo("    4. ODBC Driver 17 or 18 for SQL Server installed on this machine")
+            click.echo("    5. A .env file with: AZURE_SQL_SERVER, AZURE_SQL_DATABASE,")
+            click.echo("       AZURE_SQL_USER, AZURE_SQL_PASSWORD")
+        elif connector == "postgres":
+            click.echo("  Prerequisites for PostgreSQL:")
+            click.echo("    1. A database user with SELECT permissions on target tables")
+            click.echo("    2. SELECT on information_schema (for schema discovery)")
+            click.echo("    3. A .env file with: PG_HOST, PG_PORT, PG_DATABASE,")
+            click.echo("       PG_USER, PG_PASSWORD")
+
+        click.echo()
 
         # Step 2: Profile name
         default_profile = connector if connection_number == 1 else f"{connector}_{connection_number}"
