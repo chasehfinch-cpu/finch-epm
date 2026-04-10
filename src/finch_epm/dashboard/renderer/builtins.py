@@ -202,6 +202,57 @@ class ScatterRenderer(_BuiltinRenderer):
         return cols
 
 
+class VarianceTableRenderer(_BuiltinRenderer):
+    """Variance table: side-by-side actual vs budget/forecast with delta.
+
+    Required fields:
+        data: query name for the primary dataset (e.g., actuals)
+        compare: query name for the comparison dataset (e.g., budget)
+        join_on: column(s) to join the two datasets on
+        value: column name containing the numeric value to compare
+
+    Optional fields:
+        format: "currency", "percent", or "number"
+        prefix/suffix: formatting prefix/suffix
+        favorable: "positive" or "negative" (which direction is good;
+            default "positive" means higher actual = green)
+    """
+
+    chart_type: ClassVar[str] = "variance_table"
+    display_name: ClassVar[str] = "Variance Table"
+
+    def validate_spec(self, chart_spec: dict) -> list[str]:
+        errors = super().validate_spec(chart_spec)
+        if "compare" not in chart_spec:
+            errors.append("variance_table: 'compare' field is required (comparison query name)")
+        if "join_on" not in chart_spec:
+            errors.append("variance_table: 'join_on' field is required (join column)")
+        if "value" not in chart_spec:
+            errors.append("variance_table: 'value' field is required (numeric column)")
+        return errors
+
+
+class CustomRenderer(_BuiltinRenderer):
+    """Custom chart type using Vega-Lite specification.
+
+    Required fields:
+        data: query name
+        vega_lite: dict containing a Vega-Lite spec (mark, encoding, etc.)
+
+    The query data is injected into the spec as the data source.
+    Any valid Vega-Lite spec works.
+    """
+
+    chart_type: ClassVar[str] = "custom"
+    display_name: ClassVar[str] = "Custom (Vega-Lite)"
+
+    def validate_spec(self, chart_spec: dict) -> list[str]:
+        errors = super().validate_spec(chart_spec)
+        if "vega_lite" not in chart_spec:
+            errors.append("custom: 'vega_lite' field is required (Vega-Lite spec)")
+        return errors
+
+
 # Register all built-in renderers
 register_chart(TableRenderer())
 register_chart(BarRenderer())
@@ -211,3 +262,5 @@ register_chart(KpiRenderer())
 register_chart(PivotRenderer())
 register_chart(TimeseriesRenderer())
 register_chart(ScatterRenderer())
+register_chart(VarianceTableRenderer())
+register_chart(CustomRenderer())

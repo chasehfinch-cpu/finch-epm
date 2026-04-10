@@ -521,6 +521,81 @@ dimensions:
 
 This enables the P&L engine to generate queries with automatic joins, rollup grouping, and flag-based filtering. The dimension mapping is fully customizable per company.
 
+### variance_table
+
+Side-by-side comparison of two queries (e.g., actual vs budget) with variance calculation.
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| data | yes | string | Primary query name (e.g., actuals) |
+| compare | yes | string | Comparison query name (e.g., budget) |
+| join_on | yes | string | Column to join the two datasets on |
+| value | yes | string | Numeric column to compare |
+| format | no | string | "currency", "percent", "number" |
+| prefix | no | string | Text before numbers |
+| suffix | no | string | Text after numbers |
+| favorable | no | string | "positive" (default) or "negative" |
+
+```yaml
+queries:
+  - name: actual
+    sql: |
+      SELECT accttype, SUM(CAST(amount AS DOUBLE)) AS amount
+      FROM TransactionAccountingLine t
+      JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
+      WHERE t.posting = 'T'
+      GROUP BY accttype
+
+  - name: budget
+    sql: SELECT accttype, SUM(amount) AS amount FROM budget_data GROUP BY accttype
+
+charts:
+  - type: variance_table
+    title: Actual vs Budget
+    data: actual
+    compare: budget
+    join_on: accttype
+    value: amount
+    format: currency
+    prefix: "$"
+    width: full
+```
+
+Renders a table with columns: dimension, Actual, Budget, Variance $, Variance %.
+Green/red color coding indicates favorable vs unfavorable variance.
+
+### custom
+
+Any visualization using a Vega-Lite specification. For chart types not covered by the built-in types.
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| data | yes | string | Query name |
+| vega_lite | yes | object | Vega-Lite specification (mark, encoding, etc.) |
+
+```yaml
+charts:
+  - type: custom
+    title: Grouped Bar Chart
+    data: by_category
+    width: full
+    height: 400
+    vega_lite:
+      mark: bar
+      encoding:
+        x:
+          field: category
+          type: nominal
+        y:
+          field: amount
+          type: quantitative
+        color:
+          field: source
+          type: nominal
+```
+
+The query data is automatically injected into the Vega-Lite spec as the data source. Any valid Vega-Lite specification works -- see https://vega.github.io/vega-lite/examples/ for the full gallery.
+
 ## Rules for AI dashboard generators
 
 1. The file extension must be `.fdash`.
@@ -537,3 +612,6 @@ This enables the P&L engine to generate queries with automatic joins, rollup gro
 12. Use `format: currency` with `prefix: "$"` for monetary values in KPI tiles.
 13. Tables do not need `x` or `y` fields -- they display all columns from the query.
 14. Pivot tables require `rows` (grouping columns) and `values` (aggregation columns).
+15. Variance tables require `data`, `compare` (second query), `join_on`, and `value` fields.
+16. Custom charts require a `vega_lite` field with a valid Vega-Lite specification object.
+17. Available chart types: bar, line, area, scatter, timeseries, kpi, table, pivot, variance_table, custom.

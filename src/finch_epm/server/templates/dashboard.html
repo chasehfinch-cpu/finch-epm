@@ -59,6 +59,9 @@ table.dt tr:hover td { background: #f0f4ff; }
 <div class="grid" id="chart-grid"></div>
 
 <script src="/static/echarts.min.js"></script>
+<script src="/static/vega.min.js"></script>
+<script src="/static/vega-lite.min.js"></script>
+<script src="/static/vega-embed.min.js"></script>
 <script>
 (function() {
   "use strict";
@@ -159,7 +162,7 @@ table.dt tr:hover td { background: #f0f4ff; }
 
     spec.charts.forEach(function(ch, idx) {
       var isKpi = ch.type === "kpi";
-      var isTable = ch.type === "table" || ch.type === "pivot";
+      var isTable = ch.type === "table" || ch.type === "pivot" || ch.type === "variance_table" || ch.type === "custom";
       var isEC = !isKpi && !isTable;
       var w = ch.width || (isKpi ? "kpi" : "half");
 
@@ -457,6 +460,120 @@ table.dt tr:hover td { background: #f0f4ff; }
     t.appendChild(tbody);
     wrap.appendChild(t);
     card.appendChild(wrap);
+  };
+
+  domRenderers.variance_table = function(card, ch, data) {
+    var wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    if (!data.rows.length) { wrap.innerHTML = '<div class="error">No data</div>'; card.appendChild(wrap); return; }
+
+    var joinCol = ch.join_on;
+    var valCol = ch.value || "amount";
+    var fmt = ch.format;
+    var prefix = ch.prefix || "";
+    var suffix = ch.suffix || "";
+    var favorable = ch.favorable || "positive";
+
+    var ji = col(data, joinCol);
+    var vi = col(data, valCol);
+    if (ji < 0 || vi < 0) { wrap.innerHTML = '<div class="error">Column not found: ' + joinCol + ' or ' + valCol + '</div>'; card.appendChild(wrap); return; }
+
+    // Build lookup from comparison data
+    var compareMap = {};
+    if (data.compare && data.compare.rows) {
+      var cji = data.compare.column_names.indexOf(joinCol);
+      var cvi = data.compare.column_names.indexOf(valCol);
+      if (cji >= 0 && cvi >= 0) {
+        data.compare.rows.forEach(function(r) { compareMap[r[cji]] = Number(r[cvi]) || 0; });
+      }
+    }
+
+    var t = document.createElement("table");
+    t.className = "dt";
+    var thead = document.createElement("thead");
+    var hr = document.createElement("tr");
+    [joinCol, "Actual", "Budget", "Variance $", "Variance %"].forEach(function(h) {
+      var th = document.createElement("th");
+      th.textContent = h;
+      if (h !== joinCol) th.style.textAlign = "right";
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    t.appendChild(thead);
+
+    var tbody = document.createElement("tbody");
+    data.rows.forEach(function(row) {
+      var key = row[ji];
+      var actual = Number(row[vi]) || 0;
+      var budget = compareMap[key] || 0;
+      var delta = actual - budget;
+      var pct = budget !== 0 ? (delta / Math.abs(budget)) * 100 : 0;
+      var isFavorable = (favorable === "positive") ? delta >= 0 : delta <= 0;
+
+      var tr = document.createElement("tr");
+      var tdKey = document.createElement("td");
+      tdKey.textContent = String(key);
+      tr.appendChild(tdKey);
+
+      [actual, budget, delta].forEach(function(v) {
+        var td = document.createElement("td");
+        td.style.textAlign = "right";
+        td.style.fontVariantNumeric = "tabular-nums";
+        td.textContent = fmtNum(v, fmt, prefix, suffix);
+        tr.appendChild(td);
+      });
+
+      var tdPct = document.createElement("td");
+      tdPct.style.textAlign = "right";
+      tdPct.style.fontVariantNumeric = "tabular-nums";
+      tdPct.style.color = isFavorable ? "#2ecc71" : "#e74c3c";
+      tdPct.style.fontWeight = "600";
+      tdPct.textContent = (delta >= 0 ? "+" : "") + pct.toFixed(1) + "%";
+      tr.appendChild(tdPct);
+
+      tbody.appendChild(tr);
+    });
+    t.appendChild(tbody);
+    wrap.appendChild(t);
+    card.appendChild(wrap);
+  };
+
+  domRenderers.custom = function(card, ch, data) {
+    var container = document.createElement("div");
+    container.style.width = "100%";
+    container.style.minHeight = "360px";
+    if (ch.height) container.style.minHeight = ch.height + "px";
+    container.style.padding = "8px";
+    card.appendChild(container);
+
+    if (!ch.vega_lite || typeof vegaEmbed === "undefined") {
+      container.innerHTML = '<div class="error">Vega-Lite spec required or library not loaded</div>';
+      return;
+    }
+
+    // Build the full Vega-Lite spec with injected data
+    var spec = JSON.parse(JSON.stringify(ch.vega_lite));
+    spec["$schema"] = spec["$schema"] || "https://vega.github.io/schema/vega-lite/v5.json";
+
+    // Convert query rows to Vega-Lite values format
+    var values = data.rows.map(function(row) {
+      var obj = {};
+      data.column_names.forEach(function(c, i) {
+        var v = row[i];
+        var num = Number(v);
+        obj[c] = (v !== null && !isNaN(num) && String(v).match(/^-?\d/)) ? num : v;
+      });
+      return obj;
+    });
+
+    spec.data = { values: values };
+    if (!spec.width) spec.width = "container";
+    if (!spec.height && ch.height) spec.height = ch.height - 40;
+
+    vegaEmbed(container, spec, { actions: false, renderer: "svg" })
+      .catch(function(err) {
+        container.innerHTML = '<div class="error">Vega-Lite render error: ' + err.message + '</div>';
+      });
   };
 
   window.addEventListener("resize", function(){echartInstances.forEach(function(ec){ec.resize();});});

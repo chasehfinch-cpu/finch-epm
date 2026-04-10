@@ -21,8 +21,15 @@ from finch_epm.dashboard.resolver import resolve_queries
 
 logger = logging.getLogger(__name__)
 
-_STATIC_DIR = Path(__file__).parent / "static"
-_TEMPLATE_DIR = Path(__file__).parent / "templates"
+# Support both normal and PyInstaller-frozen modes
+import sys as _sys
+if getattr(_sys, "frozen", False) and hasattr(_sys, "_MEIPASS"):
+    _BASE = Path(_sys._MEIPASS) / "finch_epm" / "server"
+else:
+    _BASE = Path(__file__).parent
+
+_STATIC_DIR = _BASE / "static"
+_TEMPLATE_DIR = _BASE / "templates"
 
 _CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -164,6 +171,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 },
                 "served_from": result.served_from,
             }
+
+            # If this query is used by a variance chart, also resolve the comparison
+            for chart in spec.charts:
+                if chart.data == query_name and chart.config.get("compare"):
+                    compare_name = chart.config["compare"]
+                    compare_result = results.get(compare_name)
+                    if compare_result:
+                        data["compare"] = {
+                            "query_name": compare_name,
+                            "column_names": compare_result.column_names,
+                            "rows": compare_result.rows,
+                            "row_count": compare_result.row_count,
+                        }
+
             self._send_json(data)
         except Exception as e:
             logger.exception("Query execution failed: %s", query_name)
