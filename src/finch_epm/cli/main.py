@@ -758,11 +758,28 @@ def service(interval: int, once: bool) -> None:
 def setup() -> None:
     """Interactive setup wizard for configuring data sources.
 
-    Walks through connector selection, authentication, and initial
-    schema crawl. Loops to let users add multiple connections.
+    Walks through what you need, connects your data sources, syncs
+    data in the background, and shows you how to build dashboards.
     """
-    click.echo("finch-epm setup")
-    click.echo("=" * 40)
+    from finch_epm.paths import data_dir
+
+    # Welcome
+    click.echo()
+    click.echo("  finch-epm setup")
+    click.echo("  " + "=" * 50)
+    click.echo()
+    click.echo("  Welcome to finch-epm. This wizard will:")
+    click.echo("    1. Connect your data sources (NetSuite, SQL Server, etc.)")
+    click.echo("    2. Discover what tables and fields are available")
+    click.echo("    3. Start syncing data in the background")
+    click.echo("    4. Show you how to build and open dashboards")
+    click.echo()
+    click.echo("  Before you begin, make sure you have:")
+    click.echo("    - A .env file with your connection credentials")
+    click.echo("    - For NetSuite: a private key PEM file")
+    click.echo("    - For SQL Server: an ODBC driver installed")
+    click.echo()
+    click.echo("  See GETTING_STARTED.md for detailed prerequisites per source.")
     click.echo()
 
     configured: list[tuple[str, str]] = []
@@ -771,134 +788,207 @@ def setup() -> None:
     while True:
         if connection_number > 1:
             click.echo()
-            click.echo(f"--- Connection {connection_number} ---")
+            click.echo(f"  --- Connection {connection_number} ---")
 
-        # Step 1: Choose connector
+        # Step 1: Choose connector with prerequisite info
+        click.echo("  Available data sources:")
+        click.echo("    netsuite   - Oracle NetSuite (SuiteQL + REST API)")
+        click.echo("    sqlserver  - Microsoft SQL Server / Azure SQL")
+        click.echo("    postgres   - PostgreSQL")
+        click.echo("    snowflake  - Snowflake Data Cloud")
+        click.echo("    bigquery   - Google BigQuery")
+        click.echo("    odbc       - Any ODBC source (OneStream, SAP, Oracle, etc.)")
+        click.echo()
+
         connector = click.prompt(
-            "Which data source?",
+            "  Which data source?",
             type=click.Choice(["netsuite", "sqlserver", "postgres", "snowflake", "bigquery", "odbc"]),
-            default="netsuite",
         )
 
-        # Show permission requirements
+        # Show what they need BEFORE asking for credentials
         click.echo()
-        if connector == "netsuite":
-            click.echo("  Prerequisites for NetSuite:")
-            click.echo("    1. An Integration record with OAuth 2.0 Client Credentials enabled")
-            click.echo("    2. A certificate (EC or RSA) uploaded to the integration")
-            click.echo("    3. A role with these permissions:")
-            click.echo("       - SuiteQL (under Reports)")
-            click.echo("       - REST Web Services (under Setup)")
-            click.echo("       - Read access on the record types you want to query")
-            click.echo("    4. A .env file with: NS_ACCOUNT_ID, NS_CLIENT_ID, NS_CERTIFICATE_ID")
-            click.echo("    5. The private key PEM file matching the uploaded certificate")
-        elif connector == "sqlserver":
-            click.echo("  Prerequisites for SQL Server:")
-            click.echo("    1. A SQL login with SELECT permissions on target tables")
-            click.echo("    2. SELECT on INFORMATION_SCHEMA (for schema discovery)")
-            click.echo("    3. For Azure SQL: server FQDN (e.g., server.database.windows.net)")
-            click.echo("    4. ODBC Driver 17 or 18 for SQL Server installed on this machine")
-            click.echo("    5. A .env file with: AZURE_SQL_SERVER, AZURE_SQL_DATABASE,")
-            click.echo("       AZURE_SQL_USER, AZURE_SQL_PASSWORD")
-        elif connector == "postgres":
-            click.echo("  Prerequisites for PostgreSQL:")
-            click.echo("    1. A database user with SELECT permissions on target tables")
-            click.echo("    2. SELECT on information_schema (for schema discovery)")
-            click.echo("    3. A .env file with: PG_HOST, PG_PORT, PG_DATABASE,")
-            click.echo("       PG_USER, PG_PASSWORD")
+        _show_prerequisites(connector)
 
-        click.echo()
+        ready = click.confirm("  Do you have these ready?", default=True)
+        if not ready:
+            click.echo("  No problem. You can re-run setup later when ready.")
+            if configured:
+                break
+            continue
 
-        # Step 2: Profile name
+        # Profile name
         default_profile = connector if connection_number == 1 else f"{connector}_{connection_number}"
-        profile = click.prompt("Profile name", default=default_profile)
+        profile = click.prompt("  Profile name", default=default_profile)
 
-        # Step 3: Authentication
+        # Authentication
         click.echo()
-        click.echo(f"Authenticating with {connector}/{profile}...")
-
+        env_file = click.prompt("  Path to .env file")
+        key_file = None
         if connector == "netsuite":
-            click.echo("  Required: .env with NS_ACCOUNT_ID, NS_CLIENT_ID, NS_CERTIFICATE_ID")
-            click.echo("  Required: private key PEM file")
-            env_file = click.prompt("  Path to .env file")
             key_file = click.prompt("  Path to private key PEM file", default="")
-            ctx = click.get_current_context()
-            ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,
-                       key_file=key_file or None, validate=False)
-        elif connector == "sqlserver":
-            click.echo("  Required: .env with AZURE_SQL_SERVER, AZURE_SQL_DATABASE,")
-            click.echo("  AZURE_SQL_USER, AZURE_SQL_PASSWORD")
-            env_file = click.prompt("  Path to .env file")
-            ctx = click.get_current_context()
-            ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,
-                       key_file=None, validate=False)
-        elif connector == "postgres":
-            click.echo("  Required: .env with PG_HOST, PG_PORT, PG_DATABASE,")
-            click.echo("  PG_USER, PG_PASSWORD")
-            env_file = click.prompt("  Path to .env file")
-            ctx = click.get_current_context()
-            ctx.invoke(auth, connector=connector, profile=profile, env_file=env_file,
-                       key_file=None, validate=False)
+            key_file = key_file or None
 
-        # Step 4: Validate
+        try:
+            ctx = click.get_current_context()
+            ctx.invoke(auth, connector=connector, profile=profile,
+                       env_file=env_file, key_file=key_file, validate=False)
+        except SystemExit:
+            click.echo("  Credential import failed. Check your .env file and try again.")
+            continue
+
+        # Validate
         click.echo()
-        click.echo("Validating credentials...")
+        click.echo("  Validating connection...")
         try:
             _validate_credentials(connector, profile)
         except SystemExit:
-            click.echo("Credentials failed. You can re-run setup to try again.")
+            click.echo("  Connection failed. Check credentials and permissions.")
             continue
 
-        # Step 5: Crawl
+        # Crawl
         click.echo()
-        click.echo("Crawling schema...")
+        click.echo("  Discovering schema (tables, columns, dimensions)...")
         _catalog_crawl(connector, profile)
 
         configured.append((connector, profile))
         connection_number += 1
 
-        # Ask about adding more
         click.echo()
-        add_more = click.confirm("Add another data source?", default=False)
+        add_more = click.confirm("  Add another data source?", default=False)
         if not add_more:
             break
 
-    # Summary
-    click.echo()
-    click.echo("=" * 40)
-    click.echo(f"Setup complete. {len(configured)} connection(s) configured:")
-    for conn_type, prof in configured:
-        click.echo(f"  {conn_type}/{prof}")
+    if not configured:
+        click.echo("  No connections configured. Run finch-epm setup again when ready.")
+        return
 
-    # Offer to set up background sync
+    # Background sync setup
     click.echo()
-    setup_sync = click.confirm("Set up automatic background sync?", default=True)
+    click.echo("  " + "=" * 50)
+    click.echo(f"  {len(configured)} connection(s) configured:")
+    for ct, pn in configured:
+        click.echo(f"    {ct}/{pn}")
+    click.echo()
+    click.echo("  STEP: Background Sync")
+    click.echo("  finch-epm will sync your data automatically so dashboards")
+    click.echo("  are always ready when you open them. The initial sync may")
+    click.echo("  take several minutes for large datasets. You can continue")
+    click.echo("  working while it runs.")
+    click.echo()
+
+    setup_sync = click.confirm("  Set up automatic background sync?", default=True)
     if setup_sync:
         _setup_background_sync(configured)
 
-    # Offer to run initial sync now
+    # Start initial sync in background
     click.echo()
-    run_initial = click.confirm("Run initial data sync now? (This may take several minutes for large datasets)", default=True)
-    if run_initial:
-        click.echo()
-        click.echo("Running initial sync across all connections...")
-        from finch_epm.cache.service import run_sync_cycle
-        config = {
-            "profiles": [
-                {"connector": ct, "profile": pn}
-                for ct, pn in configured
-            ]
-        }
-        report = run_sync_cycle(config)
-        total = sum(p.get("total_rows", 0) for p in report.get("profiles", []))
-        click.echo(f"Initial sync complete: {total:,} rows cached locally.")
+    click.echo("  Starting initial data sync in the background...")
+    click.echo("  This runs alongside your normal work. No need to wait.")
 
+    import subprocess
+    import sys
+    subprocess.Popen(
+        [sys.executable, "-m", "finch_epm.cli.main", "service", "--once"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    click.echo("  Sync started. It will run in the background.")
+
+    # Instruction guide
     click.echo()
-    click.echo("You are ready to go. Next steps:")
-    click.echo("  finch-epm open path/to/dashboard.fdash")
+    click.echo("  " + "=" * 50)
+    click.echo("  SETUP COMPLETE")
+    click.echo("  " + "=" * 50)
     click.echo()
-    click.echo("To build a dashboard with AI assistance:")
-    click.echo("  Open Claude Code and type /dashboard")
+    click.echo("  Your data is syncing in the background. Here is what to do next:")
+    click.echo()
+    click.echo("  1. BROWSE YOUR DATA")
+    click.echo("     See what tables are available:")
+    for ct, pn in configured:
+        click.echo(f"       finch-epm catalog --tables --accessible-only -c {ct} -p {pn}")
+    click.echo()
+    click.echo("  2. OPEN A TEMPLATE DASHBOARD")
+    click.echo("     finch-epm ships with example dashboards you can try right away:")
+    click.echo(f"       finch-epm open examples/netsuite_gl_overview.fdash")
+    click.echo(f"       finch-epm open examples/multi_tab_financial.fdash")
+    click.echo()
+    click.echo("  3. BUILD YOUR OWN DASHBOARD")
+    click.echo("     Option A: Use AI -- open Claude Code and type /dashboard")
+    click.echo("     Option B: Copy a template and modify the SQL queries")
+    click.echo("     Option C: Write a .fdash file from scratch (see DASHBOARDS.md)")
+    click.echo()
+    click.echo("  4. SHARE A DASHBOARD")
+    click.echo("     Send any .fdash file to a colleague. They install finch-epm,")
+    click.echo("     run setup with their own credentials, and open the same file.")
+    click.echo("     No data is in the file -- it renders against their own access.")
+    click.echo()
+    click.echo("  5. IMPORT CSV OR EXCEL DATA")
+    click.echo("     finch-epm import budget.csv")
+    click.echo("     finch-epm import reference.xlsx --sheet Locations")
+    click.echo()
+    click.echo("  KEY FILES:")
+    click.echo(f"    Local data:     {data_dir()}")
+    click.echo(f"    Dashboard spec: DASHBOARDS.md (complete reference for .fdash format)")
+    click.echo(f"    Templates:      examples/ (ready-to-use .fdash files)")
+    click.echo(f"    AI prompt:      /dashboard command in Claude Code")
+    click.echo()
+
+
+def _show_prerequisites(connector: str) -> None:
+    """Show what the user needs before connecting to a data source."""
+    if connector == "netsuite":
+        click.echo("  What you need for NetSuite:")
+        click.echo("    [ ] Integration record with OAuth 2.0 Client Credentials")
+        click.echo("    [ ] Certificate (EC or RSA) uploaded to the integration")
+        click.echo("    [ ] Role with SuiteQL + REST Web Services permissions")
+        click.echo("    [ ] .env file containing:")
+        click.echo("          NS_ACCOUNT_ID=your_account_id")
+        click.echo("          NS_CLIENT_ID=your_client_id")
+        click.echo("          NS_CERTIFICATE_ID=your_cert_id")
+        click.echo("    [ ] Private key PEM file (matching the uploaded certificate)")
+    elif connector == "sqlserver":
+        click.echo("  What you need for SQL Server:")
+        click.echo("    [ ] SQL login with SELECT on target tables")
+        click.echo("    [ ] ODBC Driver 17 or 18 installed on this machine")
+        click.echo("    [ ] .env file containing:")
+        click.echo("          AZURE_SQL_SERVER=server.database.windows.net")
+        click.echo("          AZURE_SQL_DATABASE=your_database")
+        click.echo("          AZURE_SQL_USER=your_username")
+        click.echo("          AZURE_SQL_PASSWORD=your_password")
+    elif connector == "postgres":
+        click.echo("  What you need for PostgreSQL:")
+        click.echo("    [ ] Database user with SELECT on target tables")
+        click.echo("    [ ] .env file containing:")
+        click.echo("          PG_HOST=your_host")
+        click.echo("          PG_PORT=5432")
+        click.echo("          PG_DATABASE=your_database")
+        click.echo("          PG_USER=your_username")
+        click.echo("          PG_PASSWORD=your_password")
+    elif connector == "snowflake":
+        click.echo("  What you need for Snowflake:")
+        click.echo("    [ ] Snowflake account with a warehouse")
+        click.echo("    [ ] .env file containing:")
+        click.echo("          SF_ACCOUNT=xy12345.us-east-1")
+        click.echo("          SF_WAREHOUSE=your_warehouse")
+        click.echo("          SF_DATABASE=your_database")
+        click.echo("          SF_SCHEMA=PUBLIC")
+        click.echo("          SF_USER=your_username")
+        click.echo("          SF_PASSWORD=your_password")
+    elif connector == "bigquery":
+        click.echo("  What you need for BigQuery:")
+        click.echo("    [ ] GCP project with BigQuery enabled")
+        click.echo("    [ ] Service account JSON key file")
+        click.echo("    [ ] .env file containing:")
+        click.echo("          BQ_PROJECT=your_project_id")
+        click.echo("          BQ_DATASET=your_dataset")
+        click.echo("          BQ_CREDENTIALS_FILE=path/to/service-account.json")
+    elif connector == "odbc":
+        click.echo("  What you need for ODBC (OneStream, SAP, Oracle, etc.):")
+        click.echo("    [ ] ODBC driver for your data source installed")
+        click.echo("    [ ] .env file containing:")
+        click.echo("          ODBC_CONNECTION_STRING=DRIVER={...};SERVER=...;DATABASE=...")
+        click.echo("          ODBC_PASSWORD=your_password (optional, appended to string)")
+    click.echo()
 
 
 def _setup_background_sync(configured: list[tuple[str, str]]) -> None:
