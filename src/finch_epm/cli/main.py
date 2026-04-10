@@ -870,16 +870,140 @@ def setup() -> None:
     for conn_type, prof in configured:
         click.echo(f"  {conn_type}/{prof}")
 
+    # Offer to set up background sync
     click.echo()
-    click.echo("Next steps:")
-    for conn_type, prof in configured:
-        click.echo(f"  finch-epm catalog --tables -c {conn_type} -p {prof}")
-        click.echo(f"  finch-epm sync -c {conn_type} -p {prof} -t <table>")
+    setup_sync = click.confirm("Set up automatic background sync?", default=True)
+    if setup_sync:
+        _setup_background_sync(configured)
+
+    # Offer to run initial sync now
     click.echo()
-    click.echo("To build a dashboard:")
+    run_initial = click.confirm("Run initial data sync now? (This may take several minutes for large datasets)", default=True)
+    if run_initial:
+        click.echo()
+        click.echo("Running initial sync across all connections...")
+        from finch_epm.cache.service import run_sync_cycle
+        config = {
+            "profiles": [
+                {"connector": ct, "profile": pn}
+                for ct, pn in configured
+            ]
+        }
+        report = run_sync_cycle(config)
+        total = sum(p.get("total_rows", 0) for p in report.get("profiles", []))
+        click.echo(f"Initial sync complete: {total:,} rows cached locally.")
+
+    click.echo()
+    click.echo("You are ready to go. Next steps:")
     click.echo("  finch-epm open path/to/dashboard.fdash")
     click.echo()
-    click.echo("In .fdash files, reference a specific connection with:")
-    click.echo("  sources:")
-    for conn_type, prof in configured:
-        click.echo(f"    - {conn_type}/{prof}")
+    click.echo("To build a dashboard with AI assistance:")
+    click.echo("  Open Claude Code and type /dashboard")
+
+
+def _setup_background_sync(configured: list[tuple[str, str]]) -> None:
+    """Set up automatic background sync via OS task scheduler."""
+    import sys
+
+    from finch_epm.cache.service import save_service_config
+
+    interval = click.prompt("Sync interval (minutes)", default=15, type=int)
+
+    # Save service config
+    config = {
+        "interval_minutes": interval,
+        "sync_on_start": True,
+        "profiles": [
+            {"connector": ct, "profile": pn}
+            for ct, pn in configured
+        ],
+    }
+    save_service_config(config)
+    click.echo(f"  Sync config saved (every {interval} minutes).")
+
+    # Platform-specific task scheduler setup
+    if sys.platform == "win32":
+        _setup_windows_task(interval)
+    elif sys.platform == "darwin":
+        _setup_macos_launchd(interval)
+    else:
+        _setup_linux_cron(interval)
+
+
+def _setup_windows_task(interval: int) -> None:
+    """Register a Windows Task Scheduler job for background sync."""
+    import subprocess
+    import sys
+
+    python_exe = sys.executable
+    task_name = "finch-epm-sync"
+
+    # Build the schtasks command
+    # Runs on login + repeats every N minutes
+    cmd = [
+        "schtasks", "/Create",
+        "/TN", task_name,
+        "/TR", f'"{python_exe}" -m finch_epm.cli.main service --once',
+        "/SC", "MINUTE",
+        "/MO", str(interval),
+        "/F",  # Force overwrite if exists
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+        if result.returncode == 0:
+            click.echo(f"  Windows Task Scheduler: '{task_name}' registered (every {interval} min).")
+            click.echo(f"  To remove: schtasks /Delete /TN {task_name} /F")
+        else:
+            click.echo(f"  Could not register Windows task (may need admin).")
+            click.echo(f"  Manual setup: schtasks /Create /TN {task_name} /TR \"{python_exe} -m finch_epm.cli.main service --once\" /SC MINUTE /MO {interval}")
+    except Exception as e:
+        click.echo(f"  Task scheduler registration failed: {e}")
+        click.echo(f"  You can run the sync service manually: finch-epm service")
+
+
+def _setup_macos_launchd(interval: int) -> None:
+    """Create a launchd plist for background sync on macOS."""
+    import sys
+    from pathlib import Path
+
+    plist_dir = Path.home() / "Library" / "LaunchAgents"
+    plist_dir.mkdir(parents=True, exist_ok=True)
+    plist_path = plist_dir / "com.finch-epm.sync.plist"
+
+    python_exe = sys.executable
+    interval_seconds = interval * 60
+
+    plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.finch-epm.sync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{python_exe}</string>
+        <string>-m</string>
+        <string>finch_epm.cli.main</string>
+        <string>service</string>
+        <string>--once</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>{interval_seconds}</integer>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>"""
+
+    plist_path.write_text(plist_content)
+    click.echo(f"  macOS launchd: {plist_path}")
+    click.echo(f"  Load with: launchctl load {plist_path}")
+    click.echo(f"  Remove with: launchctl unload {plist_path}")
+
+
+def _setup_linux_cron(interval: int) -> None:
+    """Show cron setup instructions for Linux."""
+    import sys
+    python_exe = sys.executable
+    click.echo(f"  Add to crontab (crontab -e):")
+    click.echo(f"  */{interval} * * * * {python_exe} -m finch_epm.cli.main service --once")
