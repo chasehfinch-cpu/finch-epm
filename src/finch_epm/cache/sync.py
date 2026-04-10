@@ -19,6 +19,15 @@ from finch_epm.connectors.types import ScopeDescription
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_cache_table_name(name: str) -> str:
+    """Sanitize a source table name for use as a DuckDB table name.
+
+    SQL Server tables like 'dbo.RCMSiteMaster' contain dots which DuckDB
+    interprets as schema qualifiers. Replace dots with double underscores.
+    """
+    return name.replace(".", "__")
+
+
 class SyncEngine:
     """Orchestrates data sync from a connector into the local DuckDB cache.
 
@@ -134,6 +143,7 @@ class SyncEngine:
     def _sync_one_table(self, table_name: str, mode: str) -> TableSyncResult:
         """Sync a single table from the connector into the cache."""
         start = time.monotonic()
+        cache_table = _sanitize_cache_table_name(table_name)
 
         try:
             # Check for existing watermark (incremental mode)
@@ -191,10 +201,10 @@ class SyncEngine:
             else:
                 rows = [list(row) for row in result.rows]
 
-            # Ingest into cache
+            # Ingest into cache (use sanitized name for DuckDB compatibility)
             ingest_mode = "replace" if mode == "full" else "append"
             rows_ingested = self._cache.ingest_facts(
-                table_name, col_names, col_type_strings, rows, mode=ingest_mode
+                cache_table, col_names, col_type_strings, rows, mode=ingest_mode
             )
 
             # Update watermark
