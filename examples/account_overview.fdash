@@ -1,0 +1,65 @@
+name: Account Overview
+description: Chart of accounts by type, with subsidiary and department breakdowns
+sources:
+  - netsuite
+
+queries:
+  - name: accounts_by_type
+    sql: |
+      SELECT accttype, COUNT(*) AS account_count
+      FROM Account
+      WHERE isinactive = 'F'
+      GROUP BY accttype
+      ORDER BY account_count DESC
+
+  - name: subsidiaries
+    sql: |
+      SELECT id, name, parent, isinactive
+      FROM Subsidiary
+      WHERE isinactive = 'F'
+      ORDER BY name
+
+  - name: departments
+    sql: |
+      SELECT id, name, isinactive
+      FROM Department
+      WHERE isinactive = 'F'
+      ORDER BY name
+
+  - name: locations_by_status
+    sql: |
+      SELECT
+        CASE WHEN isinactive = 'T' THEN 'Inactive' ELSE 'Active' END AS status,
+        COUNT(*) AS count
+      FROM Location
+      GROUP BY isinactive
+
+  - name: total_accounts
+    sql: |
+      SELECT COUNT(*) AS total FROM Account WHERE isinactive = 'F'
+
+charts:
+  - type: kpi
+    title: Active Accounts
+    data: total_accounts
+    value: total
+
+  - type: bar
+    title: Accounts by Type
+    data: accounts_by_type
+    x: accttype
+    y: account_count
+
+  - type: table
+    title: Active Subsidiaries
+    data: subsidiaries
+
+  - type: table
+    title: Active Departments
+    data: departments
+
+  - type: bar
+    title: Locations by Status
+    data: locations_by_status
+    x: status
+    y: count

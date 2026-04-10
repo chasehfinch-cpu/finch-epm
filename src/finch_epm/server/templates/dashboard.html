@@ -13,21 +13,28 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helve
 .staleness { font-size: 11px; color: #8888aa; margin-top: 2px; }
 .staleness.stale { color: #cc8800; }
 .staleness.missing { color: #cc3333; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 16px; padding: 20px 24px; }
-.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }
-.card-header { padding: 14px 18px 0; font-size: 14px; font-weight: 600; color: #333; }
-.card-body { padding: 10px 18px 18px; min-height: 300px; }
-.card-body.kpi { min-height: auto; display: flex; align-items: center; justify-content: center; padding: 24px; }
-.kpi-value { font-size: 42px; font-weight: 700; color: #1a1a2e; }
-.kpi-label { font-size: 13px; color: #666; margin-top: 4px; }
+.grid { display: flex; flex-wrap: wrap; gap: 16px; padding: 20px 24px; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; display: flex; flex-direction: column; }
+.card.card-chart { flex: 1 1 calc(50% - 8px); min-width: 400px; }
+.card.card-kpi { flex: 0 0 auto; min-width: 180px; max-width: 280px; }
+.card.card-table { flex: 1 1 calc(50% - 8px); min-width: 400px; }
+.card-header { padding: 14px 18px 8px; font-size: 14px; font-weight: 600; color: #333; }
+.chart-container { width: 100%; height: 360px; padding: 0 8px 8px; }
+.card-kpi .card-body { display: flex; align-items: center; justify-content: center; padding: 20px 24px; }
+.kpi-value { font-size: 48px; font-weight: 700; color: #1a1a2e; line-height: 1; }
+.kpi-label { font-size: 13px; color: #666; margin-top: 6px; }
 table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-table.data-table th { text-align: left; padding: 8px 10px; border-bottom: 2px solid #e0e0e0; font-weight: 600; color: #555; background: #fafafa; position: sticky; top: 0; }
-table.data-table td { padding: 6px 10px; border-bottom: 1px solid #eee; }
+table.data-table th { text-align: left; padding: 8px 12px; border-bottom: 2px solid #e0e0e0; font-weight: 600; color: #555; background: #fafafa; position: sticky; top: 0; white-space: nowrap; }
+table.data-table td { padding: 6px 12px; border-bottom: 1px solid #eee; }
 table.data-table tr:hover td { background: #f0f4ff; }
-.card-body.table-wrap { overflow: auto; max-height: 500px; padding: 0; }
+.table-wrap { overflow: auto; max-height: 420px; }
 .pivot-table th { background: #f0f0f0; }
 .error { color: #cc3333; padding: 20px; font-size: 13px; }
 .loading { color: #888; padding: 20px; font-size: 13px; }
+@media (max-width: 900px) {
+  .card.card-chart, .card.card-table { flex: 1 1 100%; min-width: 0; }
+  .card.card-kpi { flex: 1 1 calc(50% - 8px); max-width: none; }
+}
 </style>
 </head>
 <body>
@@ -85,37 +92,70 @@ table.data-table tr:hover td { background: #f0f4ff; }
   function renderCharts(spec) {
     var grid = document.getElementById("chart-grid");
     grid.innerHTML = "";
+    echartInstances = [];
+
+    // Phase 1: Build all DOM elements and add to grid
+    var deferredCharts = [];
 
     spec.charts.forEach(function(chart, idx) {
       var card = document.createElement("div");
-      card.className = "card";
+      var isKpi = chart.type === "kpi";
+      var isTable = chart.type === "table" || chart.type === "pivot";
+      var isEChart = !isKpi && !isTable;
+      card.className = "card " + (isKpi ? "card-kpi" : isTable ? "card-table" : "card-chart");
 
       var header = document.createElement("div");
       header.className = "card-header";
       header.textContent = chart.title || chart.type;
       card.appendChild(header);
 
-      var body = document.createElement("div");
       var data = queryData[chart.data];
 
       if (!data) {
-        body.className = "card-body";
-        body.innerHTML = '<div class="error">No data for query: ' + chart.data + '</div>';
+        var errDiv = document.createElement("div");
+        errDiv.className = "error";
+        errDiv.textContent = "No data for query: " + chart.data;
+        card.appendChild(errDiv);
       } else if (data.error) {
-        body.className = "card-body";
-        body.innerHTML = '<div class="error">' + data.error + '</div>';
+        var errDiv2 = document.createElement("div");
+        errDiv2.className = "error";
+        errDiv2.textContent = data.error;
+        card.appendChild(errDiv2);
+      } else if (isEChart) {
+        // Create container now, init ECharts in phase 2 after DOM insertion
+        var container = document.createElement("div");
+        container.className = "chart-container";
+        container.id = "chart-" + idx;
+        card.appendChild(container);
+        deferredCharts.push({ chart: chart, data: data, containerId: "chart-" + idx });
       } else {
         var renderer = chartRenderers[chart.type];
         if (renderer) {
-          renderer(body, chart, data, idx);
+          renderer(card, chart, data, idx);
         } else {
-          body.className = "card-body";
-          body.innerHTML = '<div class="error">Unknown chart type: ' + chart.type + '</div>';
+          var errDiv3 = document.createElement("div");
+          errDiv3.className = "error";
+          errDiv3.textContent = "Unknown chart type: " + chart.type;
+          card.appendChild(errDiv3);
         }
       }
 
-      card.appendChild(body);
       grid.appendChild(card);
+    });
+
+    // Phase 2: Init ECharts after all elements are in the DOM with dimensions
+    requestAnimationFrame(function() {
+      deferredCharts.forEach(function(item) {
+        var container = document.getElementById(item.containerId);
+        if (container && container.offsetWidth > 0) {
+          var ec = echarts.init(container);
+          echartInstances.push(ec);
+          var builder = echartBuilders[item.chart.type];
+          if (builder) {
+            builder(ec, item.chart, item.data);
+          }
+        }
+      });
     });
   }
 
@@ -140,122 +180,93 @@ table.data-table tr:hover td { background: #f0f4ff; }
     el.className = "staleness " + level;
   }
 
-  // -- Chart renderers --
+  // -- ECharts option builders (called in phase 2, after DOM insertion) --
+  var echartBuilders = {};
 
-  var chartRenderers = {};
-
-  chartRenderers.bar = function(body, chart, data, idx) {
-    body.className = "card-body";
-    body.id = "chart-" + idx;
-    var xCol = chart.x;
-    var yCol = chart.y;
-    var xi = data.column_names.indexOf(xCol);
-    var yi = data.column_names.indexOf(yCol);
-    if (xi < 0 || yi < 0) { body.innerHTML = '<div class="error">Columns not found: ' + xCol + ', ' + yCol + '</div>'; return; }
-
+  echartBuilders.bar = function(ec, chart, data) {
+    var xi = data.column_names.indexOf(chart.x);
+    var yi = data.column_names.indexOf(chart.y);
+    if (xi < 0 || yi < 0) return;
     var xData = data.rows.map(function(r) { return r[xi]; });
     var yData = data.rows.map(function(r) { return Number(r[yi]) || 0; });
-
-    var ec = echarts.init(body);
-    echartInstances.push(ec);
     ec.setOption({
-      tooltip: { trigger: "axis" },
-      xAxis: { type: "category", data: xData, axisLabel: { rotate: xData.length > 8 ? 30 : 0 } },
-      yAxis: { type: "value" },
-      series: [{ type: "bar", data: yData, itemStyle: { color: "#4a6cf7" } }],
-      grid: { left: 60, right: 20, top: 20, bottom: 40 }
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+      xAxis: { type: "category", data: xData, axisLabel: { rotate: xData.length > 6 ? 35 : 0, fontSize: 11 } },
+      yAxis: { type: "value", axisLabel: { fontSize: 11 } },
+      series: [{ type: "bar", data: yData, itemStyle: { color: "#4a6cf7", borderRadius: [3, 3, 0, 0] }, barMaxWidth: 50 }],
+      grid: { left: 55, right: 16, top: 16, bottom: xData.length > 6 ? 60 : 36 }
     });
   };
 
-  chartRenderers.line = function(body, chart, data, idx) {
-    body.className = "card-body";
-    body.id = "chart-" + idx;
-    var xCol = chart.x;
-    var yCol = chart.y;
-    var xi = data.column_names.indexOf(xCol);
-    var yi = data.column_names.indexOf(yCol);
-    if (xi < 0 || yi < 0) { body.innerHTML = '<div class="error">Columns not found</div>'; return; }
-
-    var ec = echarts.init(body);
-    echartInstances.push(ec);
+  echartBuilders.line = function(ec, chart, data) {
+    var xi = data.column_names.indexOf(chart.x);
+    var yi = data.column_names.indexOf(chart.y);
+    if (xi < 0 || yi < 0) return;
     ec.setOption({
       tooltip: { trigger: "axis" },
-      xAxis: { type: "category", data: data.rows.map(function(r) { return r[xi]; }) },
-      yAxis: { type: "value" },
-      series: [{ type: "line", data: data.rows.map(function(r) { return Number(r[yi]) || 0; }), smooth: true, itemStyle: { color: "#4a6cf7" } }],
-      grid: { left: 60, right: 20, top: 20, bottom: 40 }
+      xAxis: { type: "category", data: data.rows.map(function(r) { return r[xi]; }), axisLabel: { fontSize: 11 } },
+      yAxis: { type: "value", axisLabel: { fontSize: 11 } },
+      series: [{ type: "line", data: data.rows.map(function(r) { return Number(r[yi]) || 0; }), smooth: true, symbolSize: 6, lineStyle: { width: 2 }, itemStyle: { color: "#4a6cf7" } }],
+      grid: { left: 55, right: 16, top: 16, bottom: 36 }
     });
   };
 
-  chartRenderers.area = function(body, chart, data, idx) {
-    body.className = "card-body";
-    body.id = "chart-" + idx;
-    var xCol = chart.x;
-    var yCol = chart.y;
-    var xi = data.column_names.indexOf(xCol);
-    var yi = data.column_names.indexOf(yCol);
-    if (xi < 0 || yi < 0) { body.innerHTML = '<div class="error">Columns not found</div>'; return; }
-
-    var ec = echarts.init(body);
-    echartInstances.push(ec);
+  echartBuilders.area = function(ec, chart, data) {
+    var xi = data.column_names.indexOf(chart.x);
+    var yi = data.column_names.indexOf(chart.y);
+    if (xi < 0 || yi < 0) return;
     ec.setOption({
       tooltip: { trigger: "axis" },
-      xAxis: { type: "category", data: data.rows.map(function(r) { return r[xi]; }) },
-      yAxis: { type: "value" },
-      series: [{ type: "line", data: data.rows.map(function(r) { return Number(r[yi]) || 0; }), areaStyle: { color: "rgba(74,108,247,0.15)" }, smooth: true, itemStyle: { color: "#4a6cf7" } }],
-      grid: { left: 60, right: 20, top: 20, bottom: 40 }
+      xAxis: { type: "category", data: data.rows.map(function(r) { return r[xi]; }), axisLabel: { fontSize: 11 } },
+      yAxis: { type: "value", axisLabel: { fontSize: 11 } },
+      series: [{ type: "line", data: data.rows.map(function(r) { return Number(r[yi]) || 0; }), areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{offset: 0, color: "rgba(74,108,247,0.25)"}, {offset: 1, color: "rgba(74,108,247,0.02)"}]) }, smooth: true, lineStyle: { width: 2 }, itemStyle: { color: "#4a6cf7" } }],
+      grid: { left: 55, right: 16, top: 16, bottom: 36 }
     });
   };
 
-  chartRenderers.scatter = function(body, chart, data, idx) {
-    body.className = "card-body";
-    body.id = "chart-" + idx;
-    var xCol = chart.x;
-    var yCol = chart.y;
-    var xi = data.column_names.indexOf(xCol);
-    var yi = data.column_names.indexOf(yCol);
-    if (xi < 0 || yi < 0) { body.innerHTML = '<div class="error">Columns not found</div>'; return; }
-
-    var ec = echarts.init(body);
-    echartInstances.push(ec);
+  echartBuilders.scatter = function(ec, chart, data) {
+    var xi = data.column_names.indexOf(chart.x);
+    var yi = data.column_names.indexOf(chart.y);
+    if (xi < 0 || yi < 0) return;
     ec.setOption({
       tooltip: { trigger: "item" },
-      xAxis: { type: "value", name: xCol },
-      yAxis: { type: "value", name: yCol },
-      series: [{ type: "scatter", data: data.rows.map(function(r) { return [Number(r[xi]) || 0, Number(r[yi]) || 0]; }), itemStyle: { color: "#4a6cf7" } }],
-      grid: { left: 60, right: 20, top: 20, bottom: 40 }
+      xAxis: { type: "value", name: chart.x, nameLocation: "center", nameGap: 28, axisLabel: { fontSize: 11 } },
+      yAxis: { type: "value", name: chart.y, axisLabel: { fontSize: 11 } },
+      series: [{ type: "scatter", data: data.rows.map(function(r) { return [Number(r[xi]) || 0, Number(r[yi]) || 0]; }), symbolSize: 8, itemStyle: { color: "#4a6cf7", opacity: 0.7 } }],
+      grid: { left: 55, right: 16, top: 16, bottom: 44 }
     });
   };
 
-  chartRenderers.timeseries = function(body, chart, data, idx) {
-    body.className = "card-body";
-    body.id = "chart-" + idx;
-    var timeCol = chart.time;
-    var yCol = chart.y;
-    var ti = data.column_names.indexOf(timeCol);
-    var yi = data.column_names.indexOf(yCol);
-    if (ti < 0 || yi < 0) { body.innerHTML = '<div class="error">Columns not found</div>'; return; }
-
-    var ec = echarts.init(body);
-    echartInstances.push(ec);
+  echartBuilders.timeseries = function(ec, chart, data) {
+    var ti = data.column_names.indexOf(chart.time);
+    var yi = data.column_names.indexOf(chart.y);
+    if (ti < 0 || yi < 0) return;
     ec.setOption({
       tooltip: { trigger: "axis" },
-      xAxis: { type: "time" },
-      yAxis: { type: "value" },
-      series: [{ type: "line", data: data.rows.map(function(r) { return [r[ti], Number(r[yi]) || 0]; }), smooth: true, itemStyle: { color: "#4a6cf7" } }],
-      grid: { left: 60, right: 20, top: 20, bottom: 40 }
+      xAxis: { type: "time", axisLabel: { fontSize: 11 } },
+      yAxis: { type: "value", axisLabel: { fontSize: 11 } },
+      series: [{ type: "line", data: data.rows.map(function(r) { return [r[ti], Number(r[yi]) || 0]; }), smooth: true, symbolSize: 4, lineStyle: { width: 2 }, itemStyle: { color: "#4a6cf7" } }],
+      grid: { left: 55, right: 16, top: 16, bottom: 36 }
     });
   };
 
-  chartRenderers.kpi = function(body, chart, data) {
-    body.className = "card-body kpi";
-    var valCol = chart.value;
-    var vi = data.column_names.indexOf(valCol);
-    if (vi < 0 || !data.rows.length) { body.innerHTML = '<div class="error">No data</div>'; return; }
+  // -- DOM-based renderers (KPI, table, pivot -- no ECharts needed) --
+  var chartRenderers = {};
+
+  chartRenderers.kpi = function(card, chart, data) {
+    var vi = data.column_names.indexOf(chart.value);
+    if (vi < 0 || !data.rows.length) { card.innerHTML += '<div class="error">No data</div>'; return; }
 
     var val = data.rows[0][vi];
     var num = Number(val);
-    var formatted = isNaN(num) ? String(val) : num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    var formatted = isNaN(num) ? String(val) : num.toLocaleString(undefined, { maximumFractionDigits: 0 });
+
+    var body = document.createElement("div");
+    body.className = "card-body";
+    body.style.display = "flex";
+    body.style.alignItems = "center";
+    body.style.justifyContent = "center";
+    body.style.padding = "20px 24px";
 
     var container = document.createElement("div");
     container.style.textAlign = "center";
@@ -270,11 +281,13 @@ table.data-table tr:hover td { background: #f0f4ff; }
       container.appendChild(labelDiv);
     }
     body.appendChild(container);
+    card.appendChild(body);
   };
 
-  chartRenderers.table = function(body, chart, data) {
-    body.className = "card-body table-wrap";
-    if (!data.rows.length) { body.innerHTML = '<div class="loading">No data</div>'; return; }
+  chartRenderers.table = function(card, chart, data) {
+    var wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    if (!data.rows.length) { wrap.innerHTML = '<div class="loading">No data</div>'; card.appendChild(wrap); return; }
 
     var table = document.createElement("table");
     table.className = "data-table";
@@ -291,16 +304,16 @@ table.data-table tr:hover td { background: #f0f4ff; }
     var tbody = document.createElement("tbody");
     data.rows.forEach(function(row) {
       var tr = document.createElement("tr");
-      row.forEach(function(cell, ci) {
+      row.forEach(function(cell) {
         var td = document.createElement("td");
-        var val = cell;
-        if (val !== null && val !== undefined) {
-          var num = Number(val);
-          if (!isNaN(num) && String(val).match(/^-?\d/)) {
+        if (cell !== null && cell !== undefined) {
+          var num = Number(cell);
+          if (!isNaN(num) && String(cell).match(/^-?\d/)) {
             td.style.textAlign = "right";
+            td.style.fontVariantNumeric = "tabular-nums";
             td.textContent = num.toLocaleString(undefined, { maximumFractionDigits: 2 });
           } else {
-            td.textContent = String(val);
+            td.textContent = String(cell);
           }
         }
         tr.appendChild(td);
@@ -308,24 +321,23 @@ table.data-table tr:hover td { background: #f0f4ff; }
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
-    body.appendChild(table);
+    wrap.appendChild(table);
+    card.appendChild(wrap);
   };
 
-  chartRenderers.pivot = function(body, chart, data) {
-    body.className = "card-body table-wrap";
-    if (!data.rows.length) { body.innerHTML = '<div class="loading">No data</div>'; return; }
+  chartRenderers.pivot = function(card, chart, data) {
+    var wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    if (!data.rows.length) { wrap.innerHTML = '<div class="loading">No data</div>'; card.appendChild(wrap); return; }
 
     var rowFields = chart.rows || [];
     var valueFields = chart.values || [];
-    var colField = chart.columns;
 
     if (!rowFields.length || !valueFields.length) {
-      // Fall back to regular table
-      chartRenderers.table(body, chart, data);
+      chartRenderers.table(card, chart, data);
       return;
     }
 
-    // Simple pivot: group by row fields, aggregate value fields
     var groups = {};
     var rowIndices = rowFields.map(function(f) { return data.column_names.indexOf(f); });
     var valIndices = valueFields.map(function(f) { return data.column_names.indexOf(f); });
@@ -341,7 +353,7 @@ table.data-table tr:hover td { background: #f0f4ff; }
     });
 
     var table = document.createElement("table");
-    table.className = "data-table pivot-table";
+    table.className = "data-table";
     var thead = document.createElement("thead");
     var hr = document.createElement("tr");
     rowFields.concat(valueFields).forEach(function(f) {
@@ -364,13 +376,15 @@ table.data-table tr:hover td { background: #f0f4ff; }
       g.values.forEach(function(v) {
         var td = document.createElement("td");
         td.style.textAlign = "right";
+        td.style.fontVariantNumeric = "tabular-nums";
         td.textContent = v.toLocaleString(undefined, { maximumFractionDigits: 2 });
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
-    body.appendChild(table);
+    wrap.appendChild(table);
+    card.appendChild(wrap);
   };
 
   // Handle window resize
@@ -380,14 +394,10 @@ table.data-table tr:hover td { background: #f0f4ff; }
 
   // Auto-refresh every 30 seconds
   setInterval(function() {
-    if (dashSpec) {
-      loadAllQueries(dashSpec);
-    }
+    if (dashSpec) { loadAllQueries(dashSpec); }
   }, 30000);
 
-  // Start
   init();
-
 })();
 </script>
 </body>
