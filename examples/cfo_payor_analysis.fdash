@@ -1,0 +1,70 @@
+name: Payor Class Analysis
+description: Revenue cycle breakdown by payor class -- Medicare, Medicaid, Commercial, BCBS, Self-Pay
+sources:
+  - sqlserver
+
+queries:
+  - name: payor_by_year
+    sql: |
+      SELECT
+        SUBSTRING(FIRSTDOS, 1, 4) AS year,
+        PRIPAYORNATIONALFINCLASS AS payor,
+        SUM(CAST(PAYMENTS AS DOUBLE)) * -1 AS cash,
+        SUM(CAST(CHARGES AS DOUBLE)) AS charges,
+        COUNT(*) AS volume
+      FROM dbo__WaterFallT2
+      WHERE SUBSTRING(FIRSTDOS, 1, 4) >= '2022'
+      GROUP BY SUBSTRING(FIRSTDOS, 1, 4), PRIPAYORNATIONALFINCLASS
+      ORDER BY year, cash DESC
+
+  - name: payor_2024
+    sql: |
+      SELECT
+        PRIPAYORNATIONALFINCLASS AS payor,
+        SUM(CAST(PAYMENTS AS DOUBLE)) * -1 AS cash_collected,
+        SUM(CAST(CHARGES AS DOUBLE)) AS total_charges,
+        CASE
+          WHEN SUM(CAST(CHARGES AS DOUBLE)) > 0
+          THEN ROUND(SUM(CAST(PAYMENTS AS DOUBLE)) * -100.0 / SUM(CAST(CHARGES AS DOUBLE)), 1)
+          ELSE 0
+        END AS yield_pct
+      FROM dbo__WaterFallT2
+      WHERE SUBSTRING(FIRSTDOS, 1, 4) = '2024'
+      GROUP BY PRIPAYORNATIONALFINCLASS
+      ORDER BY cash_collected DESC
+
+  - name: payor_practice_matrix
+    sql: |
+      SELECT
+        PRACTICE,
+        PRIPAYORNATIONALFINCLASS AS payor,
+        SUM(CAST(PAYMENTS AS DOUBLE)) * -1 AS cash
+      FROM dbo__WaterFallT2
+      WHERE SUBSTRING(FIRSTDOS, 1, 4) = '2024'
+      GROUP BY PRACTICE, PRIPAYORNATIONALFINCLASS
+      ORDER BY PRACTICE, cash DESC
+
+charts:
+  - type: bar
+    title: 2024 Cash by Payor Class
+    data: payor_2024
+    x: payor
+    y: [cash_collected, total_charges]
+    colors: ["#4a6cf7", "#95a5a6"]
+    width: full
+    height: 420
+
+  - type: table
+    title: 2024 Payor Performance
+    data: payor_2024
+    columns:
+      cash_collected: { format: currency, prefix: "$" }
+      total_charges: { format: currency, prefix: "$" }
+      yield_pct: { format: percent, suffix: "%" }
+
+  - type: pivot
+    title: Cash by Practice and Payor (2024)
+    data: payor_practice_matrix
+    rows: [PRACTICE, payor]
+    values: [cash]
+    width: full

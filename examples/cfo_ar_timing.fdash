@@ -1,0 +1,113 @@
+name: AR Timing and Cash Collection
+description: Revenue cycle analysis -- payments, charges, and adjustments by practice and payor class
+sources:
+  - sqlserver
+
+queries:
+  - name: payments_by_practice
+    sql: |
+      SELECT
+        PRACTICE,
+        SUM(CAST(PAYMENTS AS DOUBLE)) * -1 AS cash_collected,
+        SUM(CAST(CHARGES AS DOUBLE)) AS total_charges,
+        SUM(CAST(ADJUSTMENTS AS DOUBLE)) * -1 AS total_adjustments,
+        CASE
+          WHEN SUM(CAST(CHARGES AS DOUBLE)) > 0
+          THEN ROUND(SUM(CAST(PAYMENTS AS DOUBLE)) * -100.0 / SUM(CAST(CHARGES AS DOUBLE)), 1)
+          ELSE 0
+        END AS collection_rate
+      FROM dbo__WaterFallT2
+      WHERE REMITCLASS IN ('PAYMENTS', 'Payment', 'GROSSPMTS')
+         OR REMITCLASS IN ('CHARGES', 'TOTALCHARGES')
+         OR REMITCLASS IN ('ADJUSTMENTS', 'Adjustment', 'OTHERADJ')
+      GROUP BY PRACTICE
+      ORDER BY cash_collected DESC
+
+  - name: payments_by_payor
+    sql: |
+      SELECT
+        PRIPAYORNATIONALFINCLASS AS payor_class,
+        SUM(CAST(PAYMENTS AS DOUBLE)) * -1 AS cash_collected,
+        SUM(CAST(CHARGES AS DOUBLE)) AS total_charges,
+        COUNT(*) AS transaction_count
+      FROM dbo__WaterFallT2
+      GROUP BY PRIPAYORNATIONALFINCLASS
+      ORDER BY cash_collected DESC
+
+  - name: monthly_trend
+    sql: |
+      SELECT
+        SUBSTRING(PAYMENTMONTH, 1, 7) AS month,
+        SUM(CAST(PAYMENTS AS DOUBLE)) * -1 AS cash_collected,
+        SUM(CAST(CHARGES AS DOUBLE)) AS charges
+      FROM dbo__WaterFallT2
+      WHERE PAYMENTMONTH >= '2024-01-01'
+      GROUP BY SUBSTRING(PAYMENTMONTH, 1, 7)
+      ORDER BY month
+
+  - name: kpi_totals
+    sql: |
+      SELECT
+        SUM(CAST(PAYMENTS AS DOUBLE)) * -1 AS total_cash,
+        SUM(CAST(CHARGES AS DOUBLE)) AS total_charges,
+        SUM(CAST(ADJUSTMENTS AS DOUBLE)) * -1 AS total_adjustments,
+        COUNT(DISTINCT PRACTICE) AS practice_count
+      FROM dbo__WaterFallT2
+      WHERE SUBSTRING(FIRSTDOS, 1, 4) = '2024'
+
+charts:
+  - type: kpi
+    title: 2024 Cash Collected
+    data: kpi_totals
+    value: total_cash
+    format: currency
+    prefix: "$"
+    color: "#2ecc71"
+
+  - type: kpi
+    title: 2024 Total Charges
+    data: kpi_totals
+    value: total_charges
+    format: currency
+    prefix: "$"
+
+  - type: kpi
+    title: Active Practices
+    data: kpi_totals
+    value: practice_count
+
+  - type: bar
+    title: Cash Collected by Practice
+    data: payments_by_practice
+    x: PRACTICE
+    y: cash_collected
+    width: full
+    height: 420
+
+  - type: bar
+    title: Cash Collected by Payor Class
+    data: payments_by_payor
+    x: payor_class
+    y: [cash_collected, total_charges]
+    colors: ["#2ecc71", "#95a5a6"]
+    width: full
+    height: 420
+
+  - type: line
+    title: Monthly Cash Collection Trend (2024+)
+    data: monthly_trend
+    x: month
+    y: [cash_collected, charges]
+    colors: ["#2ecc71", "#3498db"]
+    width: full
+    height: 400
+
+  - type: table
+    title: Practice Detail
+    data: payments_by_practice
+    width: full
+    columns:
+      cash_collected: { format: currency, prefix: "$" }
+      total_charges: { format: currency, prefix: "$" }
+      total_adjustments: { format: currency, prefix: "$" }
+      collection_rate: { format: percent, suffix: "%" }
