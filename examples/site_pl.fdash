@@ -1,0 +1,33 @@
+name: Site P&L
+description: Revenue and expense by site, current quarter
+sources:
+  - netsuite
+
+queries:
+  - name: site_pl
+    sql: |
+      SELECT
+        site,
+        SUM(CASE WHEN account_type = 'Income' THEN amount ELSE 0 END) AS revenue,
+        SUM(CASE WHEN account_type = 'Expense' THEN amount ELSE 0 END) AS expense
+      FROM gl_detail
+      WHERE period BETWEEN :start_period AND :end_period
+      GROUP BY site
+
+parameters:
+  start_period:
+    type: period
+    default: current_quarter_start
+  end_period:
+    type: period
+    default: current_quarter_end
+
+charts:
+  - type: bar
+    title: Revenue by Site
+    data: site_pl
+    x: site
+    y: revenue
+  - type: table
+    title: P&L Detail
+    data: site_pl

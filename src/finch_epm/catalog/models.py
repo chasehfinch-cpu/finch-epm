@@ -1,0 +1,1 @@
+"""Catalog data models — placeholder."""
