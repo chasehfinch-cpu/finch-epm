@@ -38,6 +38,11 @@ table.dt tr:hover td { background: #f0f4ff; }
 .cross-filter-badge:hover { background: #cc3333; }
 .export-btn { float: right; font-size: 11px; color: #888; cursor: pointer; padding: 2px 8px; border: 1px solid #ddd; border-radius: 3px; background: #fafafa; text-decoration: none; }
 .export-btn:hover { background: #eee; color: #333; }
+.tab-bar { background: #fff; border-bottom: 2px solid #e0e0e0; padding: 0 24px; display: flex; gap: 0; overflow-x: auto; }
+.tab-bar:empty { display: none; }
+.tab-btn { padding: 10px 20px; font-size: 13px; font-weight: 600; color: #666; cursor: pointer; border: none; background: none; border-bottom: 3px solid transparent; white-space: nowrap; transition: color 0.15s, border-color 0.15s; }
+.tab-btn:hover { color: #333; }
+.tab-btn.active { color: #1a1a2e; border-bottom-color: #4a6cf7; }
 @media (max-width: 900px) {
   .card-half { flex: 1 1 100%; min-width: 0; }
   .card-kpi { flex: 1 1 calc(50% - 8px); max-width: none; }
@@ -55,6 +60,7 @@ table.dt tr:hover td { background: #f0f4ff; }
     <div class="staleness" id="global-staleness"></div>
   </div>
 </div>
+<div class="tab-bar" id="tab-bar"></div>
 <div class="filter-bar" id="filter-bar"></div>
 <div class="grid" id="chart-grid"></div>
 
@@ -70,9 +76,8 @@ table.dt tr:hover td { background: #f0f4ff; }
   var dashSpec = null;
   var queryData = {};
   var echartInstances = [];
-  var activeFilters = {};      // {parameter_name: value}
-  var crossFilterValue = null; // {column: value} from chart click
-  var crossFilterParam = null;
+  var activeFilters = {};
+  var activePage = 0;
 
   function init() {
     fetch("/api/dashboard").then(function(r){return r.json();}).then(function(spec) {
@@ -80,8 +85,30 @@ table.dt tr:hover td { background: #f0f4ff; }
       document.getElementById("dash-title").textContent = spec.name;
       document.getElementById("dash-desc").textContent = spec.description || "";
       document.title = spec.name + " - finch-epm";
+      buildTabBar(spec);
       buildFilterBar(spec);
       loadAll(spec);
+    });
+  }
+
+  function buildTabBar(spec) {
+    var bar = document.getElementById("tab-bar");
+    bar.innerHTML = "";
+    if (!spec.is_multi_page || !spec.pages || !spec.pages.length) return;
+
+    spec.pages.forEach(function(page, idx) {
+      var btn = document.createElement("button");
+      btn.className = "tab-btn" + (idx === activePage ? " active" : "");
+      btn.textContent = page.name;
+      btn.addEventListener("click", function() {
+        activePage = idx;
+        // Update active state
+        bar.querySelectorAll(".tab-btn").forEach(function(b, i) {
+          b.className = "tab-btn" + (i === idx ? " active" : "");
+        });
+        render(dashSpec);
+      });
+      bar.appendChild(btn);
     });
   }
 
@@ -160,7 +187,14 @@ table.dt tr:hover td { background: #f0f4ff; }
     echartInstances = [];
     var deferred = [];
 
-    spec.charts.forEach(function(ch, idx) {
+    // Get charts for the active page (or all charts in single-page mode)
+    var chartsToRender = spec.charts || [];
+    if (spec.is_multi_page && spec.pages && spec.pages.length > 0) {
+      var page = spec.pages[activePage] || spec.pages[0];
+      chartsToRender = page.charts || [];
+    }
+
+    chartsToRender.forEach(function(ch, idx) {
       var isKpi = ch.type === "kpi";
       var isTable = ch.type === "table" || ch.type === "pivot" || ch.type === "variance_table" || ch.type === "custom";
       var isEC = !isKpi && !isTable;

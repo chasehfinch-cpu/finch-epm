@@ -134,6 +134,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 }
                 for c in spec.charts
             ],
+            "pages": [
+                {
+                    "name": p.name,
+                    "description": p.description,
+                    "charts": [
+                        {
+                            "type": c.type,
+                            "title": c.title,
+                            "data": c.data,
+                            "cross_filter": c.cross_filter,
+                            **c.config,
+                        }
+                        for c in p.charts
+                    ],
+                }
+                for p in spec.pages
+            ],
+            "is_multi_page": spec.is_multi_page,
         }
         self._send_json(data)
 

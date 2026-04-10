@@ -1,0 +1,158 @@
+name: Financial Dashboard
+description: Multi-tab financial reporting -- P&L, Revenue Cycle, Site Performance
+sources:
+  - netsuite
+  - sqlserver
+
+queries:
+  # P&L queries
+  - name: pl_by_type
+    sql: |
+      SELECT accttype,
+        CASE WHEN accttype IN ('Income', 'OthIncome') THEN SUM(CAST(amount AS DOUBLE)) * -1
+             ELSE SUM(CAST(amount AS DOUBLE))
+        END AS amount
+      FROM TransactionAccountingLine t
+      JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
+      WHERE t.posting = 'T'
+      GROUP BY accttype
+      ORDER BY amount DESC
+
+  - name: monthly_revenue
+    sql: |
+      SELECT SUBSTRING(tx.trandate, 1, 7) AS month,
+        SUM(CAST(t.amount AS DOUBLE)) * -1 AS revenue
+      FROM TransactionAccountingLine t
+      JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
+      WHERE t.posting = 'T' AND a.accttype IN ('Income', 'OthIncome')
+      GROUP BY SUBSTRING(tx.trandate, 1, 7)
+      ORDER BY month
+
+  - name: revenue_kpi
+    sql: |
+      SELECT SUM(CAST(t.amount AS DOUBLE)) * -1 AS total_revenue
+      FROM TransactionAccountingLine t
+      JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
+      WHERE t.posting = 'T' AND a.accttype IN ('Income', 'OthIncome')
+
+  - name: expense_kpi
+    sql: |
+      SELECT SUM(CAST(t.amount AS DOUBLE)) AS total_expense
+      FROM TransactionAccountingLine t
+      JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
+      WHERE t.posting = 'T' AND a.accttype IN ('Expense', 'OthExpense', 'COGS')
+
+  # Revenue cycle queries
+  - name: cash_by_practice
+    sql: |
+      SELECT PRACTICE,
+        SUM(CAST(PAYMENTS AS DOUBLE)) * -1 AS cash,
+        SUM(CAST(CHARGES AS DOUBLE)) AS charges
+      FROM dbo__WaterFallT2
+      WHERE SUBSTRING(FIRSTDOS, 1, 4) >= '2024'
+      GROUP BY PRACTICE ORDER BY cash DESC
+
+  - name: cash_by_payor
+    sql: |
+      SELECT PRIPAYORNATIONALFINCLASS AS payor,
+        SUM(CAST(PAYMENTS AS DOUBLE)) * -1 AS cash
+      FROM dbo__WaterFallT2
+      WHERE SUBSTRING(FIRSTDOS, 1, 4) >= '2024'
+      GROUP BY PRIPAYORNATIONALFINCLASS ORDER BY cash DESC
+
+  - name: monthly_cash
+    sql: |
+      SELECT SUBSTRING(PAYMENTMONTH, 1, 7) AS month,
+        SUM(CAST(PAYMENTS AS DOUBLE)) * -1 AS cash
+      FROM dbo__WaterFallT2
+      WHERE PAYMENTMONTH >= '2024-01-01'
+      GROUP BY SUBSTRING(PAYMENTMONTH, 1, 7) ORDER BY month
+
+  # Dimension queries
+  - name: subsidiaries
+    sql: SELECT id, name, parent FROM Subsidiary ORDER BY name
+
+  - name: departments
+    sql: SELECT id, name FROM Department WHERE isinactive = 'F' ORDER BY name
+
+  - name: locations
+    sql: SELECT id, name, subsidiary FROM Location WHERE isinactive = 'F' ORDER BY name
+
+pages:
+  - name: P&L Summary
+    charts:
+      - type: kpi
+        title: Total Revenue
+        data: revenue_kpi
+        value: total_revenue
+        format: currency
+        prefix: "$"
+        color: "#2ecc71"
+
+      - type: kpi
+        title: Total Expense
+        data: expense_kpi
+        value: total_expense
+        format: currency
+        prefix: "$"
+        color: "#e74c3c"
+
+      - type: bar
+        title: Amounts by Account Type
+        data: pl_by_type
+        x: accttype
+        y: amount
+        width: full
+
+      - type: line
+        title: Monthly Revenue Trend
+        data: monthly_revenue
+        x: month
+        y: revenue
+        color: "#2ecc71"
+        width: full
+        height: 400
+
+  - name: Revenue Cycle
+    charts:
+      - type: bar
+        title: Cash Collected by Practice
+        data: cash_by_practice
+        x: PRACTICE
+        y: [cash, charges]
+        colors: ["#2ecc71", "#95a5a6"]
+        cross_filter: PRACTICE
+        width: full
+        height: 420
+
+      - type: bar
+        title: Cash by Payor Class
+        data: cash_by_payor
+        x: payor
+        y: cash
+        cross_filter: payor
+
+      - type: line
+        title: Monthly Cash Collection
+        data: monthly_cash
+        x: month
+        y: cash
+        color: "#2ecc71"
+        width: full
+        height: 400
+
+  - name: Organization
+    charts:
+      - type: table
+        title: Subsidiaries
+        data: subsidiaries
+        width: full
+
+      - type: table
+        title: Active Departments
+        data: departments
+
+      - type: table
+        title: Active Locations
+        data: locations

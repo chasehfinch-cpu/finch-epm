@@ -16,6 +16,7 @@ from finch_epm.dashboard.models import (
     DashboardSpec,
     DimensionMappingRef,
     FilterSpec,
+    PageSpec,
     ParameterSpec,
     QuerySpec,
 )
@@ -89,12 +90,14 @@ def validate_fdash(spec: DashboardSpec) -> list[str]:
     if not spec.queries:
         errors.append("Dashboard must define at least one query.")
 
-    if not spec.charts:
-        errors.append("Dashboard must define at least one chart.")
+    all_charts = spec.get_all_charts()
+
+    if not all_charts:
+        errors.append("Dashboard must define at least one chart (in 'charts' or 'pages').")
 
     # Check that all chart data references exist as query names
     query_names = set(spec.get_query_names())
-    for chart in spec.charts:
+    for chart in all_charts:
         if chart.data not in query_names:
             errors.append(
                 f"Chart '{chart.title}' references query '{chart.data}' "
@@ -106,7 +109,7 @@ def validate_fdash(spec: DashboardSpec) -> list[str]:
         from finch_epm.dashboard.renderer.builtins import _CHART_REGISTRY  # noqa: F401
         from finch_epm.dashboard.renderer.registry import get_chart_renderer
 
-        for chart in spec.charts:
+        for chart in all_charts:
             try:
                 renderer = get_chart_renderer(chart.type)
                 chart_errors = renderer.validate_spec(chart.to_render_spec())
@@ -178,7 +181,7 @@ def _parse_dashboard(raw: dict[str, Any], source: str) -> DashboardSpec:
                 multi=f.get("multi", False),
             ))
 
-    # Parse charts
+    # Parse charts (single-page mode)
     charts: list[ChartSpec] = []
     for c in raw.get("charts", []):
         if not isinstance(c, dict):
@@ -186,6 +189,26 @@ def _parse_dashboard(raw: dict[str, Any], source: str) -> DashboardSpec:
         if "type" not in c:
             raise FdashError(f"Each chart must have a 'type' in {source}")
         charts.append(ChartSpec.from_dict(c))
+
+    # Parse pages (multi-tab mode)
+    pages: list[PageSpec] = []
+    for p in raw.get("pages", []):
+        if not isinstance(p, dict):
+            raise FdashError(f"Each page must be a mapping in {source}")
+        if "name" not in p:
+            raise FdashError(f"Each page must have a 'name' in {source}")
+        page_charts: list[ChartSpec] = []
+        for c in p.get("charts", []):
+            if not isinstance(c, dict):
+                raise FdashError(f"Each chart in page '{p['name']}' must be a mapping in {source}")
+            if "type" not in c:
+                raise FdashError(f"Each chart must have a 'type' in {source}")
+            page_charts.append(ChartSpec.from_dict(c))
+        pages.append(PageSpec(
+            name=p["name"],
+            charts=page_charts,
+            description=p.get("description", ""),
+        ))
 
     # Parse dimension mapping reference
     dimensions = None
@@ -203,5 +226,6 @@ def _parse_dashboard(raw: dict[str, Any], source: str) -> DashboardSpec:
         parameters=parameters,
         filters=filters,
         charts=charts,
+        pages=pages,
         dimensions=dimensions,
     )
