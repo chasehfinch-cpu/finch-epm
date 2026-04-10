@@ -62,6 +62,16 @@ _SQL_TYPE_MAP: dict[str, ColumnType] = {
 _DIMENSION_MAX_ROWS = 10000
 
 
+def _quote_table(name: str) -> str:
+    """Properly quote a potentially schema-qualified table name for T-SQL.
+
+    'dbo.MyTable' -> '[dbo].[MyTable]'
+    'MyTable' -> '[MyTable]'
+    """
+    parts = name.split(".", 1)
+    return ".".join(f"[{p}]" for p in parts)
+
+
 @register_connector
 class SqlServerConnector(ConnectorBase):
     """SQL Server / Azure SQL connector via pyodbc.
@@ -330,7 +340,7 @@ class SqlServerConnector(ConnectorBase):
         cursor = self._conn.cursor()
         cursor.execute(
             f"SELECT [{dim.id_column}], [{dim.label_column}], [{parent_col}] "
-            f"FROM [{dimension_name}] ORDER BY [{dim.id_column}]"
+            f"FROM {_quote_table(dimension_name)} ORDER BY [{dim.id_column}]"
         )
         rows = cursor.fetchall()
         cursor.close()
@@ -345,7 +355,7 @@ class SqlServerConnector(ConnectorBase):
         estimated_calls = 0
         for table_name in scope.tables:
             try:
-                cursor.execute(f"SELECT COUNT(*) FROM [{table_name}]")
+                cursor.execute(f"SELECT COUNT(*) FROM {_quote_table(table_name)}")
                 count = cursor.fetchone()[0]
                 estimated_rows += count
                 estimated_calls += 1
@@ -373,7 +383,7 @@ class SqlServerConnector(ConnectorBase):
         all_rows: list[list[Any]] = []
 
         for table_name in plan.scope.tables:
-            sql = f"SELECT * FROM [{table_name}]"
+            sql = f"SELECT * FROM {_quote_table(table_name)}"
 
             where_clauses: list[str] = []
             for key, value in plan.scope.filters.items():
