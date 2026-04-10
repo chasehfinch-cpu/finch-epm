@@ -1,0 +1,123 @@
+name: GL Overview
+description: General ledger summary from NetSuite -- works for any NetSuite instance after syncing Account, Subsidiary, and TransactionAccountingLine
+sources:
+  - netsuite
+
+queries:
+  - name: revenue_vs_expense
+    sql: |
+      SELECT
+        a.accttype AS account_type,
+        CASE
+          WHEN a.accttype IN ('Income', 'OthIncome') THEN SUM(CAST(t.amount AS DOUBLE)) * -1
+          ELSE SUM(CAST(t.amount AS DOUBLE))
+        END AS amount
+      FROM TransactionAccountingLine t
+      JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
+      WHERE t.posting = 'T'
+        AND a.accttype IN ('Income', 'OthIncome', 'Expense', 'OthExpense', 'COGS')
+      GROUP BY a.accttype
+      ORDER BY amount DESC
+
+  - name: monthly_income
+    sql: |
+      SELECT
+        SUBSTRING(tx.trandate, 1, 7) AS month,
+        SUM(CAST(t.amount AS DOUBLE)) * -1 AS revenue
+      FROM TransactionAccountingLine t
+      JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
+      WHERE t.posting = 'T'
+        AND a.accttype IN ('Income', 'OthIncome')
+      GROUP BY SUBSTRING(tx.trandate, 1, 7)
+      ORDER BY month
+
+  - name: by_subsidiary
+    sql: |
+      SELECT
+        s.name AS subsidiary,
+        SUM(CAST(t.amount AS DOUBLE)) * -1 AS revenue
+      FROM TransactionAccountingLine t
+      JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN TransactionLine tl
+        ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
+        AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
+      JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
+      JOIN Subsidiary s ON CAST(tl.subsidiary AS INTEGER) = CAST(s.id AS INTEGER)
+      WHERE t.posting = 'T'
+        AND a.accttype IN ('Income', 'OthIncome')
+      GROUP BY s.name
+      HAVING SUM(CAST(t.amount AS DOUBLE)) * -1 > 0
+      ORDER BY revenue DESC
+
+  - name: totals
+    sql: |
+      SELECT
+        SUM(CASE WHEN a.accttype IN ('Income', 'OthIncome')
+            THEN CAST(t.amount AS DOUBLE) * -1 ELSE 0 END) AS total_revenue,
+        SUM(CASE WHEN a.accttype IN ('Expense', 'OthExpense', 'COGS')
+            THEN CAST(t.amount AS DOUBLE) ELSE 0 END) AS total_expense
+      FROM TransactionAccountingLine t
+      JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
+      WHERE t.posting = 'T'
+
+  - name: account_detail
+    sql: |
+      SELECT
+        a.accttype,
+        a.fullname AS account,
+        SUM(CAST(t.amount AS DOUBLE)) AS net_amount
+      FROM TransactionAccountingLine t
+      JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
+      WHERE t.posting = 'T'
+      GROUP BY a.accttype, a.fullname
+      HAVING ABS(SUM(CAST(t.amount AS DOUBLE))) > 1000
+      ORDER BY a.accttype, ABS(SUM(CAST(t.amount AS DOUBLE))) DESC
+
+charts:
+  - type: kpi
+    title: Total Revenue
+    data: totals
+    value: total_revenue
+    format: currency
+    prefix: "$"
+    color: "#2ecc71"
+
+  - type: kpi
+    title: Total Expense
+    data: totals
+    value: total_expense
+    format: currency
+    prefix: "$"
+    color: "#e74c3c"
+
+  - type: bar
+    title: Revenue vs Expense by Account Type
+    data: revenue_vs_expense
+    x: account_type
+    y: amount
+
+  - type: line
+    title: Monthly Revenue Trend
+    data: monthly_income
+    x: month
+    y: revenue
+    color: "#2ecc71"
+    width: full
+    height: 400
+
+  - type: bar
+    title: Revenue by Subsidiary
+    data: by_subsidiary
+    x: subsidiary
+    y: revenue
+    width: full
+    height: 420
+
+  - type: table
+    title: Account Detail (amounts over $1,000)
+    data: account_detail
+    width: full
+    height: 500
+    columns:
+      net_amount: { format: currency, prefix: "$" }

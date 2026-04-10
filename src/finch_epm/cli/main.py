@@ -574,6 +574,60 @@ def sync(
 
 
 # ---------------------------------------------------------------------------
+# import
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="import")
+@click.argument("file_path", type=click.Path(exists=True))
+@click.option("--table", "-t", help="Table name in the cache (default: filename)")
+@click.option("--sheet", "-s", help="Excel sheet name (default: active sheet)")
+def import_file(file_path: str, table: str | None, sheet: str | None) -> None:
+    """Import a CSV or Excel file into the local cache.
+
+    The file becomes a queryable table in dashboards, alongside
+    data synced from NetSuite, SQL Server, or PostgreSQL.
+
+        finch-epm import budget_2024.csv
+        finch-epm import reference.xlsx --sheet Locations --table locations
+        finch-epm import forecast.xlsx --sheet Q4 --table forecast_q4
+
+    After import, use the table name in .fdash SQL queries.
+    """
+    from pathlib import Path as P
+
+    from finch_epm.cache.local import LocalCacheEngine
+    from finch_epm.paths import cache_db_path
+
+    path = P(file_path)
+    cache = LocalCacheEngine(str(cache_db_path()))
+
+    try:
+        if path.suffix.lower() == ".csv":
+            from finch_epm.connectors.file.connector import import_csv
+            rows = import_csv(path, cache, table_name=table)
+        elif path.suffix.lower() in (".xlsx", ".xls"):
+            from finch_epm.connectors.file.connector import import_excel
+            if sheet is None and path.suffix.lower() in (".xlsx", ".xls"):
+                from finch_epm.connectors.file.connector import list_excel_sheets
+                sheets = list_excel_sheets(path)
+                if len(sheets) > 1:
+                    click.echo(f"Available sheets: {', '.join(sheets)}")
+                    sheet = click.prompt("Which sheet?", type=click.Choice(sheets))
+            rows = import_excel(path, cache, sheet_name=sheet, table_name=table)
+        else:
+            click.echo(f"Unsupported file type: {path.suffix}")
+            click.echo("Supported: .csv, .xlsx")
+            raise SystemExit(1)
+
+        final_name = table or path.stem.replace(" ", "_").replace("-", "_")
+        click.echo(f"Imported {rows:,} rows into table '{final_name}'")
+        click.echo(f"Query it in .fdash SQL: SELECT * FROM {final_name}")
+    finally:
+        cache.close()
+
+
+# ---------------------------------------------------------------------------
 # open
 # ---------------------------------------------------------------------------
 

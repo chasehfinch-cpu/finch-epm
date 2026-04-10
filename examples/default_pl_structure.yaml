@@ -1,0 +1,34 @@
+name: net_income
+display_name: Net Income
+is_subtotal: true
+children:
+- name: revenue
+  display_name: Revenue
+  account_types:
+  - Income
+  - OthIncome
+  sign_convention: -1
+- name: cogs
+  display_name: Cost of Goods Sold
+  account_types:
+  - COGS
+- name: gross_profit
+  display_name: Gross Profit
+  is_subtotal: true
+- name: operating_expense
+  display_name: Operating Expenses
+  account_types:
+  - Expense
+  - OthExpense
+- name: ebitda
+  display_name: EBITDA
+  is_subtotal: true
+- name: depreciation
+  display_name: Depreciation and Amortization
+  account_types:
+  - DeferExpense
+- name: other
+  display_name: Other Income / Expense
+  account_types:
+  - OthCurrLiab
+  - LongTermLiab

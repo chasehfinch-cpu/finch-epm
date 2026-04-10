@@ -1,0 +1,66 @@
+name: net_income
+display_name: Net Income
+is_subtotal: true
+children:
+- name: revenue
+  display_name: Revenue
+  account_types:
+  - Income
+  - OthIncome
+  sign_convention: -1
+  children:
+  - name: patient_revenue
+    display_name: Patient Revenue
+    account_numbers: ["4000", "4100", "4200"]
+    sign_convention: -1
+  - name: management_fee
+    display_name: Management Fee Revenue
+    account_numbers: ["4400"]
+    sign_convention: -1
+  - name: other_revenue
+    display_name: Other Revenue
+    account_numbers: ["4800", "4900"]
+    sign_convention: -1
+- name: direct_expense
+  display_name: Direct Expenses
+  children:
+  - name: provider_labor
+    display_name: Provider Labor
+    account_types:
+    - Expense
+    account_numbers: ["8100", "8200"]
+  - name: idr_fees
+    display_name: IDR / Collection Fees
+    account_types:
+    - Expense
+    account_numbers: ["6200", "6220", "6230"]
+  - name: other_direct
+    display_name: Other Direct Expenses
+    account_types:
+    - Expense
+    account_numbers: ["6000", "6100", "6300"]
+- name: contribution_margin
+  display_name: Contribution Margin
+  is_subtotal: true
+- name: overhead
+  display_name: Overhead / G&A
+  account_types:
+  - Expense
+  - OthExpense
+  account_numbers: ["7000", "7100", "7200", "7300", "7400", "7500"]
+- name: ebitda
+  display_name: EBITDA
+  is_subtotal: true
+- name: cogs
+  display_name: Cost of Goods Sold
+  account_types:
+  - COGS
+- name: depreciation
+  display_name: Depreciation and Amortization
+  account_types:
+  - DeferExpense
+- name: other
+  display_name: Other Income / Expense
+  account_types:
+  - OthCurrLiab
+  - LongTermLiab
