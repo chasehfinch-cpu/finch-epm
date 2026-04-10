@@ -18,11 +18,17 @@ finch-epm setup                          # First-time setup wizard
 finch-epm auth -c netsuite -p <name> --env-file <path>  # Import credentials
 finch-epm auth -c sqlserver -p <name> --env-file <path>  # Import SQL Server creds
 finch-epm auth -c postgres -p <name> --env-file <path>   # Import Postgres creds
+finch-epm auth -c snowflake -p <name> --env-file <path>  # Import Snowflake creds
+finch-epm auth -c bigquery -p <name> --env-file <path>   # Import BigQuery creds
+finch-epm auth -c odbc -p <name> --env-file <path>       # Import ODBC creds
 finch-epm catalog --crawl -c <connector> -p <profile>    # Discover schema
 finch-epm catalog --tables -c <connector> -p <profile>   # List tables
 finch-epm catalog --columns <table> -c <connector> -p <profile>  # List columns
 finch-epm sync -c <connector> -p <profile> -t <table>    # Sync data
+finch-epm import <file>.csv                               # Import CSV/Excel into cache
 finch-epm open <file>.fdash                               # Open dashboard
+finch-epm service                                         # Run background sync
+finch-epm service --once                                  # Run one sync cycle
 ```
 
 ## Dashboard file format (.fdash)
@@ -31,7 +37,7 @@ See `DASHBOARDS.md` for the complete specification. Key points:
 
 - YAML format with `.fdash` extension
 - Defines queries (DuckDB SQL), parameters, and charts
-- Chart types: bar, line, area, scatter, timeseries, kpi, table, pivot
+- Chart types: bar, line, area, scatter, timeseries, kpi, table, pivot, variance_table, custom
 - Multi-series support: `y: [col1, col2]` with `colors: ["#hex1", "#hex2"]`
 - Layout control: `width: full` or `width: half`, `height: 480`
 - KPI formatting: `format: currency`, `prefix: "$"`
@@ -54,7 +60,7 @@ Tables keep schema.table naming (e.g., public.users)
 
 ```
 src/finch_epm/
-    connectors/     -- NetSuite, SQL Server, PostgreSQL, Fake (for testing)
+    connectors/     -- NetSuite, SQL Server, PostgreSQL, Snowflake, BigQuery, ODBC, File, Fake
     catalog/        -- DuckDB-backed schema store
     cache/          -- DuckDB-backed data cache + sync engine
     dashboard/      -- .fdash parser, resolver, chart renderers

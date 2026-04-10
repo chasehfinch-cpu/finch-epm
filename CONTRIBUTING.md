@@ -38,7 +38,7 @@ The LocalCacheEngine stores synced data in `cache.duckdb`. The SyncEngine orches
 
 ### Dashboard (`src/finch_epm/dashboard/`)
 
-The ChartRenderer interface defines how each chart type produces output. Eight built-in types are registered as stubs. The web server and rendering pipeline are not yet implemented.
+The ChartRenderer interface defines how each chart type produces output. Ten built-in types are registered. The web server renders dashboards with Apache ECharts and Vega-Lite.
 
 ## Directory structure
 
@@ -57,19 +57,42 @@ src/finch_epm/
             suiteql.py           SuiteQL query execution with pagination
             metadata.py          REST metadata-catalog client
             records.py           Exhaustive registry of all NetSuite record types
+        sqlserver/
+            connector.py         SQL Server / Azure SQL via pyodbc
+            auth.py              Connection string builder
+        postgres/
+            connector.py         PostgreSQL via psycopg2
+            auth.py              Connection parameter builder
+        snowflake/
+            connector.py         Snowflake via snowflake-connector-python
+        bigquery/
+            connector.py         Google BigQuery via google-cloud-bigquery
+        odbc/
+            connector.py         Generic ODBC for any ODBC-accessible source
+        file/
+            connector.py         CSV and Excel file import
     catalog/
         catalog.py               CatalogStore (DuckDB-backed)
         migrations.py            Schema creation for catalog tables
     cache/
         base.py                  CacheEngine ABC
-        local.py                 LocalCacheEngine (DuckDB-backed)
+        local.py                 LocalCacheEngine (DuckDB-backed, read-only mode)
         models.py                QueryRequest, QueryResult, SyncWatermark, SyncReport
         sync.py                  SyncEngine (incremental sync orchestrator)
+        service.py               Background sync service with atomic cache swap
+        scheduler.py             Schedule configuration and daemon loop
+    engine/
+        chart_of_accounts.py     Configurable P&L hierarchy (YAML-based)
+        dimensions.py            Dimension mapping layer (rollups, flags, joins)
+        pl_engine.py             P&L report generation with sign convention
     dashboard/
+        fdash.py                 .fdash YAML parser (pages, filters, cross-filter)
+        models.py                DashboardSpec, PageSpec, FilterSpec, ChartSpec
+        resolver.py              Query execution with parameter substitution
         renderer/
             base.py              ChartRenderer ABC
             registry.py          Chart type registry
-            builtins.py          Eight built-in chart type stubs
+            builtins.py          Ten built-in chart types
             types.py             RenderContext, RenderOutput
     profiles/
         manager.py               Named profiles + OS keychain integration

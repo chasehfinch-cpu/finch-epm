@@ -1,3 +1,3 @@
 """finch-epm: Local-first portable analytics layer for EPM and database systems."""
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"

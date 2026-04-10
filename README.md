@@ -6,29 +6,38 @@ finch-epm lets you connect to NetSuite (and, over time, any structured data sour
 
 ## Current status
 
-finch-epm is in active development. v0.1 is complete and v0.2 connectors are shipping.
+v0.1, v0.2, and v0.3 are complete. The tool is functional end-to-end.
 
 **What works today:**
 
-- NetSuite connector with OAuth 2.0 certificate authentication
-- SQL Server connector (Azure SQL and on-premises) via pyodbc
-- PostgreSQL connector via psycopg2
-- Exhaustive schema introspection (probes all 200+ standard NetSuite record types)
+- 7 data source connectors: NetSuite, SQL Server, PostgreSQL, Snowflake, BigQuery, Generic ODBC, and a Fake connector for testing
+- Exhaustive schema introspection (probes all 200+ standard NetSuite record types, INFORMATION_SCHEMA for SQL databases)
 - Local DuckDB catalog that persists schema metadata between sessions
-- Local DuckDB cache with incremental sync and watermark tracking
+- Local DuckDB cache with incremental sync, watermark tracking, and atomic cache swap
+- Background sync service with OS task scheduler integration (Windows, macOS, Linux)
 - `.fdash` dashboard parser, resolver, and web renderer
-- Interactive charts via Apache ECharts: bar, line, area, scatter, time series, KPI, table, pivot
-- Multi-series support, color customization, and layout control
-- CLI commands: `setup`, `auth`, `catalog`, `sync`, `open`
-- 125 passing tests
-- AI-readable dashboard specification (DASHBOARDS.md) for generating dashboards with ChatGPT, Claude, or any AI
+- Multi-page tabbed dashboards (one .fdash file, multiple pages with shared filters)
+- 10 chart types: bar, line, area, scatter, time series, KPI, table, pivot, variance table, custom (Vega-Lite)
+- Multi-series support, color customization, layout control, and CSV export
+- Dashboard-level filter dropdowns and cross-chart filtering
+- Variance mode: actual vs budget side-by-side with automatic delta calculation
+- Custom charts via Vega-Lite specifications for any visualization not covered by built-in types
+- CSV and Excel file import for budget, forecast, and reference data
+- Configurable P&L engine with user-defined chart of accounts hierarchy
+- Dimension mapping layer for rollups, hierarchies, and binary flag filters
+- CLI commands: `setup`, `auth`, `catalog`, `sync`, `open`, `import`, `service`
+- Desktop installer infrastructure (PyInstaller spec, .fdash file association, build script)
+- IT administrator deployment script (PowerShell, pushable via Intune/SCCM/GPO)
+- AI-readable dashboard specification (DASHBOARDS.md) and Claude Code /dashboard command
+- 165 passing tests (125 unit + 40 walkthrough)
+- Complete documentation: README, GETTING_STARTED, DASHBOARDS, CONTRIBUTING, CHANGELOG
 
-**What is not yet built:**
+**What is planned for future releases:**
 
-- Desktop installer (v0.2 planned)
-- Scheduled background sync (v0.2 planned)
-- Dashboard cross-filtering (v0.2 planned)
-- Federated query mode for Snowflake/BigQuery (v0.3 planned)
+- Federated query mode (push queries to remote sources instead of caching locally)
+- Multi-source JOINs in a single .fdash query (NetSuite + SQL Server in one SQL statement)
+- Semantic layer for cross-source logical models
+- Community connector library and plugin API
 
 ## What it is
 
@@ -211,15 +220,15 @@ DuckDB compresses analytical data well; expect roughly 5-10x compression over ra
 
 ## Roadmap
 
-**v0.1 (in progress).** NetSuite connector. DuckDB catalog and cache. `.fdash` dashboard format. Eight built-in chart types. Local web renderer. CLI: `setup`, `auth`, `sync`, `open`, `catalog`. Pip install only.
+**v0.1 (complete).** NetSuite connector. DuckDB catalog and cache. `.fdash` dashboard format. Eight built-in chart types. Local web renderer. CLI: `setup`, `auth`, `sync`, `open`, `catalog`. Pip install only.
 
-**v0.2.** SQL Server and Postgres connectors. Desktop installer for macOS, Windows, and Linux. Scheduled background sync. Dashboard parameters and cross-filters.
+**v0.2 (complete).** SQL Server and Postgres connectors. Desktop installer infrastructure (PyInstaller). Scheduled background sync service. Dashboard parameters, filters, and cross-chart filtering. CSV/Excel file import. Multi-page tabbed dashboards. Variance tables. IT deployment script.
 
-**v0.3.** Snowflake and BigQuery connectors. Federated query mode. Custom chart types via Vega-Lite specs and user-supplied JavaScript.
+**v0.3 (complete).** Snowflake, BigQuery, and Generic ODBC connectors. Custom chart types via Vega-Lite specs. Configurable P&L engine with user-defined chart of accounts. Dimension mapping layer for rollups and flag filters.
 
-**v0.4.** Multi-source dashboards. Semantic layer for cross-source logical models. Optional team-shared catalogs.
+**v0.4 (planned).** Multi-source JOINs in a single query. Semantic layer for cross-source logical models. Optional team-shared catalogs. Federated query mode for fast remote backends.
 
-The architecture in v0.1 is built so that every item on this roadmap can be added without rewriting the core. If something on the roadmap would require changing the Connector interface, the cache layer, the renderer, or the dashboard format in a breaking way, that is a bug in v0.1 and will be fixed before the relevant version ships.
+The architecture is built so that every item on this roadmap can be added without rewriting the core.
 
 ## Development
 

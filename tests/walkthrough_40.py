@@ -29,7 +29,7 @@ def test(num, scenario, checks):
 
 test(1, "Package imports correctly", [
     ("finch_epm imports", lambda: __import__("finch_epm") is not None),
-    ("Version is 0.1.0", lambda: __import__("finch_epm").__version__ == "0.1.0"),
+    ("Version is 0.1.0", lambda: __import__("finch_epm").__version__ == "0.3.0"),
 ])
 
 test(2, "CLI entry point works", [

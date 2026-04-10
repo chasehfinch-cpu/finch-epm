@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.3.0 (2026-04-10)
+
+### Added
+
+- **Multi-page tabbed dashboards**: single .fdash file with multiple `pages`, each with its own charts. Tab bar navigation, shared queries and filters across all pages.
+- **Variance table chart type**: side-by-side actual vs budget with automatic Variance $ and Variance % calculation. Green/red color coding for favorable vs unfavorable.
+- **Custom chart type (Vega-Lite)**: embed any Vega-Lite specification in a .fdash file. Query data auto-injected. Vega + Vega-Lite + Vega-Embed bundled locally for offline use.
+- **Snowflake connector**: via snowflake-connector-python. INFORMATION_SCHEMA introspection. Account, warehouse, database, schema as connection params.
+- **BigQuery connector**: via google-cloud-bigquery. Service account JSON stored in OS keychain. INFORMATION_SCHEMA introspection.
+- **Generic ODBC connector**: works with any ODBC data source (OneStream, SAP, Oracle, Access). User-supplied connection string.
+- **Background sync service**: atomic cache swap pattern (sync writes to staging, then replaces main cache). No file locking conflicts between sync and dashboard. CLI: `finch-epm service` runs continuously or `--once` for schedulers.
+- **OS task scheduler integration**: setup wizard registers Windows Task Scheduler, macOS launchd, or Linux cron for automatic background sync.
+- **Concurrent sync + dashboard**: dashboard opens cache read-only with temp file fallback when sync is writing.
+- **Dashboard-level filters**: dropdown filters defined in .fdash that re-execute all queries on selection.
+- **Cross-chart filtering**: click a data point to filter all other charts. Badge shows active filter.
+- **CSV export**: every chart card has a CSV download button.
+- **IT deployment script**: PowerShell script for remote deployment via Intune/SCCM/GPO. Installs Python, finch-epm, registers file association, sets up scheduled sync, creates desktop shortcut.
+- **Desktop installer infrastructure**: PyInstaller spec file (onedir), entry point wrapper, .fdash file association registration, build script.
+- **Configurable P&L engine**: user-defined chart of accounts hierarchy via YAML. Default and healthcare-specific examples.
+- **Dimension mapping layer**: YAML-based configuration for rollup hierarchies, binary flag filters, and cross-source joins.
+- **Data truncation warnings**: sync reports exact row counts when source data exceeds query limits.
+- **Permission documentation**: setup wizard shows prerequisite checklist per connector before asking for credentials.
+- **Better error handling**: dashboard shows "data not synced" message instead of blank charts. Open command catches file locks, port conflicts, invalid .fdash files.
+- **Professional UI styling**: refined cards, typography, tab bar, filter bar, table formatting.
+- **40 user walkthrough tests**: comprehensive end-to-end verification of every user path.
+- **GETTING_STARTED.md**: complete onboarding guide from install to sharing dashboards.
+
+### Changed
+
+- Chart type count: 8 -> 10 (added variance_table and custom).
+- Connector count: 4 -> 7 (added Snowflake, BigQuery, Generic ODBC).
+- Test count: 125 unit tests + 40 walkthrough tests = 165 total.
+- Setup wizard completely rewritten: shows prerequisites, starts background sync, prints instruction guide.
+- DuckDB cache opens read-only for dashboards with temp file fallback.
+
 ## v0.2.1-dev (2026-04-10)
 
 ### Added
