@@ -29,6 +29,13 @@ table.dt td { padding: 6px 12px; border-bottom: 1px solid #eee; font-variant-num
 table.dt tr:hover td { background: #f0f4ff; }
 .table-wrap { overflow: auto; max-height: 420px; }
 .error { color: #cc3333; padding: 20px; font-size: 13px; }
+.filter-bar { background: #fff; border-bottom: 1px solid #e0e0e0; padding: 10px 24px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.filter-bar:empty { display: none; }
+.filter-group { display: flex; align-items: center; gap: 6px; }
+.filter-group label { font-size: 12px; font-weight: 600; color: #555; white-space: nowrap; }
+.filter-group select { font-size: 13px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; background: #fff; color: #333; min-width: 140px; }
+.cross-filter-badge { display: inline-block; background: #4a6cf7; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 8px; cursor: pointer; }
+.cross-filter-badge:hover { background: #cc3333; }
 @media (max-width: 900px) {
   .card-half { flex: 1 1 100%; min-width: 0; }
   .card-kpi { flex: 1 1 calc(50% - 8px); max-width: none; }
@@ -46,6 +53,7 @@ table.dt tr:hover td { background: #f0f4ff; }
     <div class="staleness" id="global-staleness"></div>
   </div>
 </div>
+<div class="filter-bar" id="filter-bar"></div>
 <div class="grid" id="chart-grid"></div>
 
 <script src="/static/echarts.min.js"></script>
@@ -57,6 +65,9 @@ table.dt tr:hover td { background: #f0f4ff; }
   var dashSpec = null;
   var queryData = {};
   var echartInstances = [];
+  var activeFilters = {};      // {parameter_name: value}
+  var crossFilterValue = null; // {column: value} from chart click
+  var crossFilterParam = null;
 
   function init() {
     fetch("/api/dashboard").then(function(r){return r.json();}).then(function(spec) {
@@ -64,13 +75,74 @@ table.dt tr:hover td { background: #f0f4ff; }
       document.getElementById("dash-title").textContent = spec.name;
       document.getElementById("dash-desc").textContent = spec.description || "";
       document.title = spec.name + " - finch-epm";
+      buildFilterBar(spec);
       loadAll(spec);
     });
   }
 
+  function buildFilterBar(spec) {
+    var bar = document.getElementById("filter-bar");
+    bar.innerHTML = "";
+    if (!spec.filters || !spec.filters.length) return;
+
+    spec.filters.forEach(function(f) {
+      var group = document.createElement("div");
+      group.className = "filter-group";
+      var label = document.createElement("label");
+      label.textContent = f.label + ":";
+      group.appendChild(label);
+
+      var select = document.createElement("select");
+      select.id = "filter-" + f.name;
+      var allOpt = document.createElement("option");
+      allOpt.value = "";
+      allOpt.textContent = "All";
+      select.appendChild(allOpt);
+
+      // Load options from API
+      fetch("/api/filter/" + encodeURIComponent(f.name))
+        .then(function(r){return r.json();})
+        .then(function(data) {
+          if (data.options) {
+            data.options.forEach(function(opt) {
+              var o = document.createElement("option");
+              o.value = opt.value;
+              o.textContent = opt.label;
+              if (f.default !== null && String(opt.value) === String(f.default)) o.selected = true;
+              select.appendChild(o);
+            });
+          }
+          if (f.default) {
+            activeFilters[f.parameter] = f.default;
+          }
+        });
+
+      select.addEventListener("change", function() {
+        if (select.value) {
+          activeFilters[f.parameter] = select.value;
+        } else {
+          delete activeFilters[f.parameter];
+        }
+        loadAll(dashSpec);
+      });
+
+      group.appendChild(select);
+      bar.appendChild(group);
+    });
+  }
+
+  function buildQueryUrl(queryName) {
+    var params = new URLSearchParams();
+    for (var key in activeFilters) {
+      params.set(key, activeFilters[key]);
+    }
+    var qs = params.toString();
+    return "/api/query/" + encodeURIComponent(queryName) + (qs ? "?" + qs : "");
+  }
+
   function loadAll(spec) {
     Promise.all(spec.queries.map(function(q) {
-      return fetch("/api/query/" + encodeURIComponent(q.name))
+      return fetch(buildQueryUrl(q.name))
         .then(function(r){return r.json();})
         .then(function(d){queryData[q.name]=d;})
         .catch(function(e){queryData[q.name]={error:String(e)};});
@@ -123,6 +195,34 @@ table.dt tr:hover td { background: #f0f4ff; }
           var ec = echarts.init(el);
           echartInstances.push(ec);
           ecBuilders[item.ch.type](ec, item.ch, item.data);
+
+          // Cross-filter: clicking a data point filters all other charts
+          if (item.ch.cross_filter) {
+            ec.on("click", function(params) {
+              var cfCol = item.ch.cross_filter;
+              var cfVal = params.name || params.value;
+              if (cfVal) {
+                activeFilters[cfCol] = cfVal;
+                // Show badge in header
+                var hdr = el.parentElement.querySelector(".card-header");
+                if (hdr) {
+                  var existing = hdr.querySelector(".cross-filter-badge");
+                  if (existing) existing.remove();
+                  var badge = document.createElement("span");
+                  badge.className = "cross-filter-badge";
+                  badge.textContent = cfCol + " = " + cfVal + " (click to clear)";
+                  badge.addEventListener("click", function(e) {
+                    e.stopPropagation();
+                    delete activeFilters[cfCol];
+                    badge.remove();
+                    loadAll(dashSpec);
+                  });
+                  hdr.appendChild(badge);
+                }
+                loadAll(dashSpec);
+              }
+            });
+          }
         }
       });
     });

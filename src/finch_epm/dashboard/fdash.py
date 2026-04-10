@@ -14,6 +14,8 @@ import yaml
 from finch_epm.dashboard.models import (
     ChartSpec,
     DashboardSpec,
+    DimensionMappingRef,
+    FilterSpec,
     ParameterSpec,
     QuerySpec,
 )
@@ -163,6 +165,19 @@ def _parse_dashboard(raw: dict[str, Any], source: str) -> DashboardSpec:
                 default=param_def,
             )
 
+    # Parse filters (dashboard-level dropdowns)
+    filters: list[FilterSpec] = []
+    for f in raw.get("filters", []):
+        if isinstance(f, dict):
+            filters.append(FilterSpec(
+                name=f.get("name", ""),
+                label=f.get("label", f.get("name", "")),
+                query=f.get("query", ""),
+                parameter=f.get("parameter", f.get("name", "")),
+                default=f.get("default"),
+                multi=f.get("multi", False),
+            ))
+
     # Parse charts
     charts: list[ChartSpec] = []
     for c in raw.get("charts", []):
@@ -172,11 +187,21 @@ def _parse_dashboard(raw: dict[str, Any], source: str) -> DashboardSpec:
             raise FdashError(f"Each chart must have a 'type' in {source}")
         charts.append(ChartSpec.from_dict(c))
 
+    # Parse dimension mapping reference
+    dimensions = None
+    dim_raw = raw.get("dimensions")
+    if isinstance(dim_raw, dict) and "file" in dim_raw:
+        dimensions = DimensionMappingRef(file=dim_raw["file"])
+    elif isinstance(dim_raw, str):
+        dimensions = DimensionMappingRef(file=dim_raw)
+
     return DashboardSpec(
         name=name,
         description=description,
         sources=sources,
         queries=queries,
         parameters=parameters,
+        filters=filters,
         charts=charts,
+        dimensions=dimensions,
     )

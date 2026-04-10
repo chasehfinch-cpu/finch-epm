@@ -40,7 +40,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
     server: DashboardHTTPServer
 
     def do_GET(self) -> None:
-        path = self.path.split("?")[0]
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query_params = parse_qs(parsed.query)
+        # Flatten single-value params
+        params = {k: v[0] if len(v) == 1 else v for k, v in query_params.items()}
 
         if path == "/" or path == "":
             self._serve_template("dashboard.html")
@@ -48,7 +53,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_dashboard_spec()
         elif path.startswith("/api/query/"):
             query_name = path[len("/api/query/"):]
-            self._serve_query(query_name)
+            self._serve_query(query_name, params)
+        elif path.startswith("/api/filter/"):
+            filter_name = path[len("/api/filter/"):]
+            self._serve_filter_options(filter_name)
         elif path == "/api/staleness":
             self._serve_staleness()
         elif path.startswith("/static/"):
@@ -96,11 +104,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 }
                 for name, p in spec.parameters.items()
             },
+            "filters": [
+                {
+                    "name": f.name,
+                    "label": f.label,
+                    "parameter": f.parameter,
+                    "default": f.default,
+                    "multi": f.multi,
+                }
+                for f in spec.filters
+            ],
             "charts": [
                 {
                     "type": c.type,
                     "title": c.title,
                     "data": c.data,
+                    "cross_filter": c.cross_filter,
                     **c.config,
                 }
                 for c in spec.charts
@@ -108,7 +127,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         }
         self._send_json(data)
 
-    def _serve_query(self, query_name: str) -> None:
+    def _serve_query(self, query_name: str, params: dict | None = None) -> None:
         spec = self.server.dashboard_spec
         cache = self.server.cache
 
@@ -118,7 +137,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            results = resolve_queries(spec, cache)
+            # Pass URL query params as parameter overrides
+            results = resolve_queries(spec, cache, parameter_overrides=params)
             result = results.get(query_name)
             if result is None:
                 self._send_error(500, f"Query execution returned no result: {query_name}")
@@ -145,6 +165,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.exception("Query execution failed: %s", query_name)
             self._send_error(500, f"Query failed: {e}")
+
+    def _serve_filter_options(self, filter_name: str) -> None:
+        """Execute a filter's query and return the dropdown options."""
+        spec = self.server.dashboard_spec
+        cache = self.server.cache
+
+        filter_spec = None
+        for f in spec.filters:
+            if f.name == filter_name:
+                filter_spec = f
+                break
+
+        if filter_spec is None:
+            self._send_error(404, f"Filter not found: {filter_name}")
+            return
+
+        try:
+            from finch_epm.cache.models import QueryRequest
+            result = cache.execute_query(QueryRequest(sql=filter_spec.query))
+            options = []
+            for row in result.rows:
+                value = row[0]
+                label = row[1] if len(row) > 1 else row[0]
+                options.append({"value": value, "label": label})
+
+            self._send_json({
+                "name": filter_name,
+                "label": filter_spec.label,
+                "parameter": filter_spec.parameter,
+                "default": filter_spec.default,
+                "multi": filter_spec.multi,
+                "options": options,
+            })
+        except Exception as e:
+            logger.exception("Filter query failed: %s", filter_name)
+            self._send_error(500, f"Filter query failed: {e}")
 
     def _serve_staleness(self) -> None:
         # Placeholder -- return basic staleness info

@@ -428,6 +428,99 @@ charts:
     y: count
 ```
 
+## Dashboard-level filters
+
+Filters appear as dropdowns at the top of the dashboard. When the user selects a value, all queries re-execute with the filter value injected as a parameter.
+
+```yaml
+filters:
+  - name: year
+    label: Year
+    query: "SELECT DISTINCT SUBSTRING(trandate, 1, 4) AS year FROM Transaction ORDER BY year DESC"
+    parameter: selected_year
+    default: "2024"
+
+  - name: practice
+    label: Practice
+    query: "SELECT DISTINCT PRACTICE FROM dbo__WaterFallT2 ORDER BY PRACTICE"
+    parameter: selected_practice
+
+queries:
+  - name: revenue
+    sql: |
+      SELECT ...
+      WHERE SUBSTRING(trandate, 1, 4) = :selected_year
+        AND PRACTICE = :selected_practice
+```
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| name | yes | string | Unique filter identifier |
+| label | yes | string | Display label in the dropdown |
+| query | yes | string | SQL that returns dropdown options (first column = value) |
+| parameter | yes | string | Parameter name injected into queries when a value is selected |
+| default | no | any | Default selected value |
+| multi | no | boolean | Allow multiple selections (default false) |
+
+## Cross-chart filtering
+
+Add `cross_filter` to a chart to make it interactive. Clicking a data point in that chart filters all other charts by the clicked value.
+
+```yaml
+charts:
+  - type: bar
+    title: Revenue by Practice
+    data: by_practice
+    x: PRACTICE
+    y: revenue
+    cross_filter: PRACTICE    # clicking a bar filters other charts by PRACTICE
+
+  - type: table
+    title: Detail
+    data: detail              # this query uses :PRACTICE parameter, auto-filtered
+```
+
+When a user clicks a bar (e.g., "STPH"), the dashboard re-executes all queries with `PRACTICE=STPH` as a parameter override. A badge appears showing the active filter, and clicking the badge clears it.
+
+## Dimension mappings
+
+For complex reporting with rollup hierarchies, binary flags, and cross-source joins, define a dimension mapping YAML file:
+
+```yaml
+# dimensions.yaml
+name: My Company Dimensions
+dimensions:
+  - name: location
+    display_name: Location / Site
+    table: dbo__IFSLocations        # cache table name
+    id_column: LocationID
+    label_column: LocationName
+    join_column: location            # column in fact tables
+    rollups:
+      - name: site
+        display_name: Site
+        column: LocationName
+      - name: group
+        display_name: Group
+        column: GroupRollup
+    flags:
+      - name: core_fy25
+        display_name: Core FY25
+        column: CoreFY25
+      - name: active
+        display_name: Active Business
+        column: ActiveBusiness
+```
+
+Reference it in a .fdash file:
+
+```yaml
+dimensions:
+  file: dimensions.yaml
+```
+
+This enables the P&L engine to generate queries with automatic joins, rollup grouping, and flag-based filtering. The dimension mapping is fully customizable per company.
+
 ## Rules for AI dashboard generators
 
 1. The file extension must be `.fdash`.
