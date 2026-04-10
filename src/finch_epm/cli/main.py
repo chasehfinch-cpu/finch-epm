@@ -708,6 +708,48 @@ def open_dashboard(dashboard: str, port: int, no_browser: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# service
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.option("--interval", default=15, help="Sync interval in minutes (default 15)")
+@click.option("--once", is_flag=True, help="Run one sync cycle and exit")
+def service(interval: int, once: bool) -> None:
+    """Run the background sync service.
+
+    Keeps the local cache warm by syncing all configured data sources
+    on a schedule. The dashboard reads from the cache and never waits.
+
+    Run continuously:
+
+        finch-epm service
+        finch-epm service --interval 5
+
+    Run once (for task scheduler / cron):
+
+        finch-epm service --once
+    """
+    from finch_epm.cache.service import run_service, run_sync_cycle
+
+    if once:
+        click.echo("Running one sync cycle...")
+        report = run_sync_cycle()
+        total = sum(p.get("total_rows", 0) for p in report.get("profiles", []))
+        errors = sum(len(p.get("errors", [])) for p in report.get("profiles", []))
+        click.echo(f"Complete: {total:,} rows synced, {errors} errors")
+        for p in report.get("profiles", []):
+            if p.get("errors"):
+                for e in p["errors"]:
+                    click.echo(f"  {p['connector']}/{p['profile']}: {e}")
+    else:
+        try:
+            run_service(interval_minutes=interval)
+        except KeyboardInterrupt:
+            click.echo("\nSync service stopped.")
+
+
+# ---------------------------------------------------------------------------
 # setup
 # ---------------------------------------------------------------------------
 
