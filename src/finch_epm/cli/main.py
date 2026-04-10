@@ -675,7 +675,8 @@ def open_dashboard(dashboard: str, port: int, no_browser: bool) -> None:
     from finch_epm.server.app import DashboardServer
 
     try:
-        cache = LocalCacheEngine(str(cache_db_path()))
+        # Open cache in read-only mode so sync can run concurrently
+        cache = LocalCacheEngine(str(cache_db_path()), read_only=True)
     except Exception as e:
         if "being used by another process" in str(e):
             click.echo(

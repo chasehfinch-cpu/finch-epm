@@ -44,10 +44,12 @@ class LocalCacheEngine(CacheEngine):
             in-memory databases (useful for testing).
     """
 
-    def __init__(self, db_path: str = ":memory:") -> None:
+    def __init__(self, db_path: str = ":memory:", read_only: bool = False) -> None:
         self._db_path = db_path
-        self._conn = duckdb.connect(db_path)
-        self._ensure_watermark_table()
+        self._read_only = read_only
+        self._conn = duckdb.connect(db_path, read_only=read_only)
+        if not read_only:
+            self._ensure_watermark_table()
 
     def _ensure_watermark_table(self) -> None:
         self._conn.execute("""
