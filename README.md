@@ -2,7 +2,7 @@
 
 **A local-first, portable analytics layer for EPM and database systems.**
 
-finch-epm lets you connect to NetSuite (and, over time, any structured data source), automatically map its schema, cache data locally in a fast columnar engine, and share interactive dashboards as small portable files -- no server, no cloud, no spreadsheet exports.
+finch-epm lets you connect to structured data sources (NetSuite, SQL Server, PostgreSQL, Snowflake, BigQuery, or any ODBC-accessible system), automatically map their schemas, cache data locally in a fast columnar engine, and share interactive dashboards as small portable files -- no server, no cloud, no spreadsheet exports.
 
 ## Current status
 
@@ -118,13 +118,13 @@ finch-epm sync -c netsuite -p production --all --incremental
 
 After sync, your data is queryable locally at millisecond speed. No network calls.
 
-### 4. Open a dashboard (coming soon)
+### 4. Open a dashboard
 
 ```
 finch-epm open path/to/dashboard.fdash
 ```
 
-This will launch a local web server and open the dashboard in your browser. The dashboard renders immediately against cached data with a staleness indicator, then refreshes in the background.
+This launches a local web server and opens the dashboard in your browser. The dashboard renders immediately against cached data with a staleness indicator.
 
 ## Dashboard format
 
@@ -168,7 +168,7 @@ charts:
 
 Dashboards are portable. They contain no data, no credentials, and no machine-specific paths. Share them via email, GitHub, Slack, or any other channel.
 
-## Built-in chart types (v0.1)
+## Built-in chart types
 
 - Table
 - Bar
@@ -178,20 +178,22 @@ Dashboards are portable. They contain no data, no credentials, and no machine-sp
 - Pivot
 - Time series
 - Scatter
+- Variance table (actual vs budget with automatic delta calculation)
+- Custom (Vega-Lite specification for any visualization)
 
-Each chart type is an instance of a generic chart renderer interface, so v0.3 can add custom charts (Vega-Lite specs, user-supplied JavaScript) without rewriting the rendering pipeline.
+Each chart type implements a generic chart renderer interface. Custom charts use Vega-Lite specs, so any visualization not covered by built-in types can be added without touching the rendering pipeline.
 
 ## How it works
 
 finch-epm has four layers, each designed to be extended without rewriting the others:
 
-1. **Connectors.** A connector is an adapter for a specific kind of data source. v0.1 ships with a NetSuite connector that uses SuiteQL and the REST metadata APIs. Each connector implements a small abstract interface -- `list_dimensions`, `get_hierarchy`, `fetch_facts`, `introspect_schema`, `plan_scope` -- that the rest of the system depends on. New connectors are added by implementing the interface; the catalog, cache, and renderer never change.
+1. **Connectors.** A connector is an adapter for a specific kind of data source. Seven connectors ship today: NetSuite (SuiteQL + REST metadata), SQL Server, PostgreSQL, Snowflake, BigQuery, Generic ODBC, and a Fake connector for testing. Each connector implements a small abstract interface -- `list_dimensions`, `get_hierarchy`, `fetch_facts`, `introspect_schema`, `plan_scope` -- that the rest of the system depends on. New connectors are added by implementing the interface; the catalog, cache, and renderer never change.
 
 2. **Catalog.** The catalog is a local DuckDB database that stores the schema discovered by introspection: table names, column types, access status, dimensional hierarchies, and category metadata. The catalog tracks every record type the source exposes, including those the current user cannot access, so users always know what exists versus what their role can see.
 
-3. **Cache.** The cache is also DuckDB, storing the actual fact and dimension data pulled from the source. Sync is incremental and scoped -- finch-epm only pulls the data that dashboards actually need, watermarked by last-modified date where the source supports it. DuckDB handles tens to hundreds of millions of rows comfortably on a laptop. The cache layer exposes a generic query interface, so v0.3's federated mode (where queries against fast remote backends like Snowflake are pushed down to the source instead of cached locally) plugs in without changing the renderer.
+3. **Cache.** The cache is also DuckDB, storing the actual fact and dimension data pulled from the source. Sync is incremental and scoped -- finch-epm only pulls the data that dashboards actually need, watermarked by last-modified date where the source supports it. DuckDB handles tens to hundreds of millions of rows comfortably on a laptop. The cache layer exposes a generic query interface, so v0.4's planned federated mode (where queries against fast remote backends like Snowflake are pushed down to the source instead of cached locally) can plug in without changing the renderer.
 
-4. **Dashboard runtime.** A small local web server reads the `.fdash` file, resolves logical names against the catalog, executes queries against the cache (or, in federated mode, pushes them down), and renders the results in a browser. Charts are interactive. Filters re-run queries against the local engine, so interactivity is instantaneous. The renderer talks to a chart interface, not to specific chart implementations, so adding custom chart types in v0.3 does not require rewriting any built-in chart.
+4. **Dashboard runtime.** A small local web server reads the `.fdash` file, resolves logical names against the catalog, executes queries against the cache (or, in federated mode, pushes them down), and renders the results in a browser. Charts are interactive. Filters re-run queries against the local engine, so interactivity is instantaneous. The renderer talks to a chart interface, not to specific chart implementations, so adding new chart types does not require rewriting any built-in chart.
 
 ## Security model
 
@@ -243,7 +245,7 @@ See `CONTRIBUTING.md` for architecture details, how to add connectors, and testi
 
 ## Contributing
 
-finch-epm is open source under the MIT license. The Connector interface is the most important extension point -- if you want to add support for a new data source, implement the interface and submit a pull request. The ChartRenderer interface is the second extension point and will be opened to community contributions in v0.3. See `CONTRIBUTING.md` for details.
+finch-epm is open source under the MIT license. The Connector interface and ChartRenderer interface are the two main extension points -- if you want to add support for a new data source or chart type, implement the relevant interface and submit a pull request. See `CONTRIBUTING.md` for details.
 
 ## License
 
