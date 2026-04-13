@@ -493,6 +493,13 @@ class NetSuiteConnector(ConnectorBase):
             watermark=datetime.now(),
         )
 
+    # Tables that don't have lastmodifieddate and need to chunk
+    # via a JOIN to the Transaction table's lastmodifieddate instead.
+    _JUNCTION_TABLES = {
+        "transactionaccountingline",
+        "transactionline",
+    }
+
     def _fetch_by_year_chunks(
         self,
         table_name: str,
@@ -503,20 +510,32 @@ class NetSuiteConnector(ConnectorBase):
 
         NetSuite's SuiteQL API caps at 100,000 rows per query with no
         way to paginate past that limit. This method splits the query
-        into per-year chunks using ``lastmodifieddate`` to get all rows.
-        If a single year still exceeds 100K, it splits further by quarter.
+        into per-year chunks. For most tables, splits on
+        ``lastmodifieddate``. For junction tables (TransactionAccountingLine,
+        TransactionLine) that don't have their own date field, splits
+        by joining to the parent Transaction table's ``lastmodifieddate``.
         """
         assert self._suiteql is not None
         all_rows: list[dict[str, Any]] = []
 
-        # Determine the year range from the data
-        count_sql = (
-            f"SELECT MIN(EXTRACT(YEAR FROM lastmodifieddate)) AS min_yr, "
-            f"MAX(EXTRACT(YEAR FROM lastmodifieddate)) AS max_yr "
-            f"FROM {table_name}"
-        )
-        if base_where:
-            count_sql += " WHERE " + " AND ".join(base_where)
+        is_junction = table_name.lower() in self._JUNCTION_TABLES
+
+        # Determine the year range
+        if is_junction:
+            # Junction tables: get year range from parent Transaction table
+            count_sql = (
+                "SELECT MIN(EXTRACT(YEAR FROM lastmodifieddate)) AS min_yr, "
+                "MAX(EXTRACT(YEAR FROM lastmodifieddate)) AS max_yr "
+                "FROM Transaction"
+            )
+        else:
+            count_sql = (
+                f"SELECT MIN(EXTRACT(YEAR FROM lastmodifieddate)) AS min_yr, "
+                f"MAX(EXTRACT(YEAR FROM lastmodifieddate)) AS max_yr "
+                f"FROM {table_name}"
+            )
+            if base_where:
+                count_sql += " WHERE " + " AND ".join(base_where)
 
         try:
             yr_result = self._suiteql.execute(count_sql, limit=1)
@@ -528,10 +547,18 @@ class NetSuiteConnector(ConnectorBase):
             min_yr, max_yr = 2015, 2026
 
         for year in range(min_yr, max_yr + 1):
-            year_where = list(base_where)
-            year_where.append(
-                f"EXTRACT(YEAR FROM lastmodifieddate) = {year}"
-            )
+            if is_junction:
+                # JOIN to Transaction to filter by year
+                year_where = list(base_where)
+                year_where.append(
+                    f"transaction IN (SELECT id FROM Transaction "
+                    f"WHERE EXTRACT(YEAR FROM lastmodifieddate) = {year})"
+                )
+            else:
+                year_where = list(base_where)
+                year_where.append(
+                    f"EXTRACT(YEAR FROM lastmodifieddate) = {year}"
+                )
             sql = f"SELECT * FROM {table_name} WHERE " + " AND ".join(year_where)
 
             result = self._suiteql.execute(sql, limit=limit)
