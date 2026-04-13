@@ -5,10 +5,13 @@ Subcommands: setup, auth, sync, open, catalog.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import Type
+from typing import Any, Type
 
 import click
+
+logger = logging.getLogger(__name__)
 
 from finch_epm import __version__
 from finch_epm.connectors.base import ConnectorBase
@@ -641,11 +644,106 @@ def sync(
             for err in report.errors:
                 click.echo(f"  {err}")
 
+        # Detect binary flag columns in small (reference) tables
+        _detect_flags_in_synced_tables(cache, report)
+
     finally:
         conn.close()
         cache.close()
         if catalog_store:
             catalog_store.close()
+
+
+def _detect_flags_in_synced_tables(cache: Any, report: Any) -> None:
+    """After sync, scan small tables for binary flag columns and prompt user."""
+    from finch_epm.cache.models import QueryRequest
+    from finch_epm.engine.flags import (
+        FlagStore,
+        classify_flags_interactive,
+        detect_binary_columns,
+    )
+
+    flag_store = FlagStore.load()
+    new_flags_found = False
+
+    for table_result in report.per_table:
+        if not table_result.success:
+            continue
+        # Only scan small tables (likely reference/dimension tables)
+        if table_result.rows_synced > 5000:
+            continue
+        if table_result.rows_synced == 0:
+            continue
+
+        table_name = table_result.table_name
+        # Check if we already have flags for this table
+        existing = flag_store.get_flag_set(table_name)
+
+        # Fetch sample data to detect binary columns
+        try:
+            # Find the actual cache table name
+            cache_tables = cache.execute_query(QueryRequest(
+                sql=f"""SELECT table_name FROM information_schema.tables
+                        WHERE table_schema='main'
+                        AND table_name LIKE '%{table_name.replace(".", "__")}%'"""
+            ))
+            if not cache_tables.rows:
+                continue
+            cache_table = cache_tables.rows[0][0]
+
+            sample = cache.execute_query(QueryRequest(
+                sql=f'SELECT * FROM "{cache_table}" LIMIT 100'
+            ))
+            if not sample.rows:
+                continue
+
+            candidates = detect_binary_columns(
+                cache_table, sample.column_names, sample.rows
+            )
+
+            if not candidates:
+                continue
+
+            # Filter out columns we've already classified
+            if existing:
+                known_cols = {f.column_name for f in existing.flags}
+                new_candidates = [c for c in candidates if c["column_name"] not in known_cols]
+            else:
+                new_candidates = candidates
+
+            if not new_candidates:
+                continue
+
+            new_flags_found = True
+            click.echo(
+                f"\n  Detected {len(new_candidates)} binary flag column(s) "
+                f"in {cache_table} ({table_result.rows_synced} rows):"
+            )
+            for c in new_candidates:
+                click.echo(
+                    f"    {c['column_name']} (suggested: {c['suggested_type']})"
+                )
+
+            classify_now = click.confirm(
+                "  Classify these flags now?", default=True
+            )
+            if classify_now:
+                flag_set = classify_flags_interactive(cache_table, new_candidates)
+                # Merge with existing
+                if existing:
+                    existing.flags.extend(flag_set.flags)
+                    flag_store.set_flag_set(existing)
+                else:
+                    flag_store.set_flag_set(flag_set)
+            else:
+                click.echo("  Skipped. Run 'finch-epm links setup' to classify later.")
+
+        except Exception as e:
+            logger.debug("Flag detection failed for %s: %s", table_name, e)
+
+    if new_flags_found:
+        flag_store.save()
+        click.echo(f"\n  Flag definitions saved.")
 
 
 # ---------------------------------------------------------------------------
