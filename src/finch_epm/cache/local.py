@@ -300,6 +300,7 @@ class LocalCacheEngine(CacheEngine):
         import os
         import tempfile
 
+        tmpname = None
         try:
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".csv", delete=False, newline="", encoding="utf-8"
@@ -307,20 +308,24 @@ class LocalCacheEngine(CacheEngine):
                 writer = csv.writer(f)
                 writer.writerows(rows)
                 tmpname = f.name
+            # Use forward slashes for cross-platform DuckDB compatibility
+            csv_path = tmpname.replace("\\", "/")
             self._conn.execute(
-                f"COPY {table_name} FROM '{tmpname}' (HEADER false, ALL_VARCHAR true)"
+                f"COPY {table_name} FROM '{csv_path}' (HEADER false, ALL_VARCHAR true)"
             )
-            os.unlink(tmpname)
         except Exception:
-            # Fallback to executemany if COPY fails
-            try:
-                os.unlink(tmpname)
-            except Exception:
-                pass
+            # Fallback to executemany if COPY fails (e.g., column mismatch,
+            # special characters in data, or platform-specific issues)
             placeholders = ", ".join(["?"] * len(column_names))
             col_list = ", ".join(column_names)
             insert_sql = f"INSERT INTO {table_name} ({col_list}) VALUES ({placeholders})"
             self._conn.executemany(insert_sql, rows)
+        finally:
+            if tmpname:
+                try:
+                    os.unlink(tmpname)
+                except Exception:
+                    pass
 
         return len(rows)
 
