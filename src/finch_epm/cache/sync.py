@@ -203,12 +203,51 @@ class SyncEngine:
             )
             plan = self._connector.plan_scope(scope)
 
-            # Fetch data
-            result = self._connector.fetch_facts(plan)
+            # Fetch data in chunks to keep memory bounded.
+            # Each chunk is written to cache immediately instead of
+            # loading the entire table into RAM.
+            rows_ingested = 0
+            col_names: list[str] = []
+            col_type_strings: list[str] = []
+            was_truncated = False
+            total_available = 0
+            first_chunk = True
 
-            if not result.rows:
+            for chunk in self._connector.fetch_facts_chunked(plan, chunk_size=50_000):
+                if not chunk.rows:
+                    continue
+
+                if first_chunk:
+                    col_type_strings = [ct.value for ct in chunk.column_types]
+                    col_names = [c for c in chunk.column_names if c != "links"]
+                    if "links" in list(chunk.column_names):
+                        col_type_strings = [
+                            ct for ct, cn in zip(col_type_strings, chunk.column_names) if cn != "links"
+                        ]
+                    first_chunk = False
+
+                # Filter 'links' column from rows
+                links_idx = -1
+                raw_col_names = list(chunk.column_names)
+                if "links" in raw_col_names:
+                    links_idx = raw_col_names.index("links")
+
+                if links_idx >= 0:
+                    rows = [[v for i, v in enumerate(row) if i != links_idx] for row in chunk.rows]
+                else:
+                    rows = [list(row) for row in chunk.rows]
+
+                # First chunk in full mode replaces; subsequent chunks append
+                chunk_mode = "replace" if (mode == "full" and rows_ingested == 0) else "append"
+                self._cache.ingest_facts(
+                    cache_table, col_names, col_type_strings, rows, mode=chunk_mode
+                )
+                rows_ingested += len(rows)
+                was_truncated = chunk.truncated
+                total_available = chunk.total_rows_available or rows_ingested
+
+            if rows_ingested == 0:
                 elapsed = time.monotonic() - start
-                # Still update watermark even if no new rows
                 self._cache.update_watermark(SyncWatermark(
                     source_name=self._connector.connector_type,
                     profile_name=self._connector.profile_name,
@@ -224,27 +263,7 @@ class SyncEngine:
                     success=True,
                 )
 
-            # Convert ColumnType enums to strings for cache ingestion
-            col_type_strings = [ct.value for ct in result.column_types]
-
-            # Filter out 'links' column if present (NetSuite artifact)
-            col_names = list(result.column_names)
-            if "links" in col_names:
-                links_idx = col_names.index("links")
-                col_names.pop(links_idx)
-                col_type_strings.pop(links_idx)
-                rows = [
-                    [v for i, v in enumerate(row) if i != links_idx]
-                    for row in result.rows
-                ]
-            else:
-                rows = [list(row) for row in result.rows]
-
-            # Ingest into cache (use sanitized name for DuckDB compatibility)
-            ingest_mode = "replace" if mode == "full" else "append"
-            rows_ingested = self._cache.ingest_facts(
-                cache_table, col_names, col_type_strings, rows, mode=ingest_mode
-            )
+            # (Ingestion already happened in the chunk loop above)
 
             # Update watermark
             self._cache.update_watermark(SyncWatermark(
@@ -256,8 +275,7 @@ class SyncEngine:
             ))
 
             # Check for truncation (source had more rows than we fetched)
-            truncated = result.truncated
-            total_available = result.total_rows_available
+            truncated = was_truncated
             if total_available and rows_ingested < total_available:
                 truncated = True
 

@@ -8,7 +8,7 @@ on ConnectorBase — they never import a specific connector.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Generator
 
 from finch_epm.connectors.types import (
     DimensionInfo,
@@ -169,6 +169,40 @@ class ConnectorBase(ABC):
             Tabular data with column names, types, and rows.
         """
         ...
+
+    def fetch_facts_chunked(
+        self,
+        plan: FetchPlan,
+        chunk_size: int = 50_000,
+    ) -> "Generator[FactResult, None, None]":
+        """Yield data in chunks instead of loading everything into memory.
+
+        Default implementation calls ``fetch_facts()`` and yields one chunk.
+        Connectors with large datasets should override this to fetch and
+        yield in batches, keeping memory usage constant.
+
+        Args:
+            plan: A plan previously returned by :meth:`plan_scope`.
+            chunk_size: Target rows per chunk.
+
+        Yields:
+            FactResult objects, each with up to ``chunk_size`` rows.
+        """
+        result = self.fetch_facts(plan)
+        if len(result.rows) <= chunk_size:
+            yield result
+            return
+        # Split the result into chunks
+        for i in range(0, len(result.rows), chunk_size):
+            chunk_rows = result.rows[i : i + chunk_size]
+            yield FactResult(
+                column_names=result.column_names,
+                column_types=result.column_types,
+                rows=chunk_rows,
+                total_rows_available=result.total_rows_available,
+                truncated=result.truncated and (i + chunk_size >= len(result.rows)),
+                watermark=result.watermark,
+            )
 
     # --- Validation ---
 
