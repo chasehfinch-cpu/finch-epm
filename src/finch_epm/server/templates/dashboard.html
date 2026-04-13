@@ -238,6 +238,7 @@ tr.hidden{display:none}
 <script src="/static/vega.min.js"></script>
 <script src="/static/vega-lite.min.js"></script>
 <script src="/static/vega-embed.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script>
 (function() {
   "use strict";
@@ -465,6 +466,16 @@ tr.hidden{display:none}
         expBtn.href = "/api/export/" + encodeURIComponent(ch.data);
         expBtn.title = "Download as CSV";
         hdr.appendChild(expBtn);
+        // Excel export (styled, with frozen panes)
+        if (typeof ExcelJS !== "undefined") {
+          var xlBtn = document.createElement("button");
+          xlBtn.className = "export-btn";
+          xlBtn.textContent = "Excel";
+          xlBtn.title = "Download as styled Excel";
+          xlBtn.style.marginLeft = "4px";
+          xlBtn.addEventListener("click", function(){ exportExcel(ch, queryData[ch.data]); });
+          hdr.appendChild(xlBtn);
+        }
       }
       card.appendChild(hdr);
       var data = queryData[ch.data];
@@ -1079,6 +1090,66 @@ tr.hidden{display:none}
       container.innerHTML = '<div class="error">Vega-Lite error: ' + err.message + '</div>';
     });
   };
+
+  // === Excel export (styled with ExcelJS) ===
+  function exportExcel(ch, data) {
+    if (!data || !data.rows || !data.rows.length) return;
+    var wb = new ExcelJS.Workbook();
+    var ws = wb.addWorksheet(ch.title || "Data");
+
+    // Visible columns (skip _ metadata)
+    var visCols = [];
+    data.column_names.forEach(function(c, ci) {
+      if (!c.startsWith("_")) visCols.push({name: c, idx: ci});
+    });
+
+    // Header row
+    var headerRow = ws.addRow(visCols.map(function(vc){return vc.name;}));
+    headerRow.font = {bold: true, color: {argb: "FFFFFFFF"}, size: 10};
+    headerRow.fill = {type: "pattern", pattern: "solid", fgColor: {argb: "FF1E3A8A"}};
+    headerRow.alignment = {horizontal: "center"};
+    headerRow.height = 24;
+
+    // Data rows
+    data.rows.forEach(function(row) {
+      var rowData = visCols.map(function(vc) {
+        var v = row[vc.idx];
+        if (v === null || v === undefined) return "";
+        var num = Number(v);
+        return (!isNaN(num) && String(v).match(/^-?\d/)) ? num : String(v);
+      });
+      var r = ws.addRow(rowData);
+      // Row class coloring
+      var rcCol = data.column_names.indexOf("_row_class");
+      var rc = rcCol >= 0 ? row[rcCol] : "";
+      if (rc === "row-level5") { r.font = {bold:true, color:{argb:"FFFFFFFF"}}; r.fill = {type:"pattern",pattern:"solid",fgColor:{argb:"FF1E3A8A"}}; }
+      else if (rc === "row-level4") { r.font = {bold:true, color:{argb:"FFFFFFFF"}}; r.fill = {type:"pattern",pattern:"solid",fgColor:{argb:"FF2563EB"}}; }
+      else if (rc === "row-level3") { r.font = {bold:true, color:{argb:"FFFFFFFF"}}; r.fill = {type:"pattern",pattern:"solid",fgColor:{argb:"FF3B82F6"}}; }
+      else if (rc === "row-ebitda") { r.font = {bold:true, color:{argb:"FFFFFFFF"}}; r.fill = {type:"pattern",pattern:"solid",fgColor:{argb:"FF059669"}}; }
+      else if (rc === "row-netincome") { r.font = {bold:true, color:{argb:"FFFFFFFF"}}; r.fill = {type:"pattern",pattern:"solid",fgColor:{argb:"FF0891B2"}}; }
+    });
+
+    // Column widths
+    visCols.forEach(function(vc, i) {
+      var col = ws.getColumn(i + 1);
+      col.width = i === 0 ? 35 : 16;
+      if (i > 0) col.numFmt = "#,##0.00";
+    });
+
+    // Freeze header row + first column
+    ws.views = [{state: "frozen", xSplit: 1, ySplit: 1}];
+
+    // Download
+    wb.xlsx.writeBuffer().then(function(buf) {
+      var blob = new Blob([buf], {type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = (ch.title || "export").replace(/[^a-zA-Z0-9]/g, "_") + ".xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
 
   // === Drill-down panel ===
   var drillPanel = null;
