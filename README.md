@@ -1,65 +1,18 @@
 # finch-epm
 
-**A local-first, portable analytics layer for EPM and database systems.**
+**Local-first BI that installs in one day and works forever.**
 
-finch-epm lets you connect to structured data sources (NetSuite, SQL Server, PostgreSQL, Snowflake, BigQuery, or any ODBC-accessible system), automatically map their schemas, cache data locally in a fast columnar engine, and share interactive dashboards as small portable files -- no server, no cloud, no spreadsheet exports.
+Dashboards share like Excel files. Any LLM can build them. Your data never leaves your network.
 
-## Current status
+finch-epm connects to NetSuite, SQL Server, PostgreSQL, Snowflake, BigQuery, or any ODBC source. It caches everything locally in a fast columnar engine. Dashboards are portable `.fdash` files — send one to a colleague and it renders against their own data using their own credentials. No server, no cloud, no subscriptions.
 
-v0.1 through v0.4 are complete. v0.5 is in progress.
+## How it works
 
-**What works today:**
+**IT sets it up once.** Connect data sources, sync data, configure the chart of accounts and compilation map. Push the configuration to every machine via GPO, Intune, or a network share. End users never see a terminal.
 
-- 7 data source connectors: NetSuite, SQL Server, PostgreSQL, Snowflake, BigQuery, Generic ODBC, and a Fake connector for testing
-- Exhaustive schema introspection (probes all 200+ standard NetSuite record types, INFORMATION_SCHEMA for SQL databases)
-- Full data sync with no artificial row caps (paginates through all data)
-- Local DuckDB catalog that persists schema metadata between sessions
-- Local DuckDB cache with incremental sync, watermark tracking, and atomic cache swap
-- Background sync service with OS task scheduler integration (Windows, macOS, Linux)
-- `.fdash` dashboard parser, resolver, and web renderer
-- Multi-page tabbed dashboards (one .fdash file, multiple pages with shared filters)
-- 10 chart types: bar, line, area, scatter, time series, KPI, table, pivot, variance table, custom (Vega-Lite)
-- Multi-series support, color customization, layout control, and CSV export
-- Dashboard-level filter dropdowns and cross-chart filtering
-- Variance mode: actual vs budget side-by-side with automatic delta calculation
-- Custom charts via Vega-Lite specifications for any visualization not covered by built-in types
-- CSV and Excel file import for budget, forecast, and reference data
-- Configurable P&L engine with user-defined chart of accounts hierarchy
-- Dimension mapping layer for rollups, hierarchies, and binary flag filters
-- Provider-agnostic AI dashboard generation (`finch-epm ask`) with 5 LLM providers
-- MCP server for Claude Desktop, Claude Code, Cursor, and any MCP client
-- Dashboard theming with 7 built-in presets (modern_light, modern_dark, financial, executive, wsj, monospace, terminal)
-- Schema change detection and data classification system
-- Graceful dashboard degradation when shared .fdash files reference missing data
-- User-defined chart of accounts with unlimited hierarchy levels and shareable templates
-- Cross-source table linking for dimension mapping across data sources
-- CLI commands: `setup`, `auth`, `catalog`, `sync`, `open`, `import`, `service`, `ask`, `llm`, `mcp`, `classify`, `coa`, `links`
-- Desktop installer infrastructure (PyInstaller spec, .fdash file association, build script)
-- IT administrator deployment script (PowerShell, pushable via Intune/SCCM/GPO)
-- AI-readable dashboard specification (DASHBOARDS.md) and Claude Code /dashboard command
-- 356 passing tests
-- Complete documentation: README, GETTING_STARTED, DASHBOARDS, CONTRIBUTING, CHANGELOG, docs/mcp.md
+**Users open dashboards.** Double-click a `.fdash` file. It opens in the browser with live data, filters, and charts. Share it over email, Slack, or Git — the file contains no data, just the layout.
 
-**What is planned for v0.5 release:**
-
-- Interactive table-linking web UI for drag-and-drop dimension setup
-- Visual overhaul: professional P&L hierarchy rendering (expand/collapse, freeze-pane, variance coloring)
-- On-premises IT governance layer (LAN-based, no cloud)
-- Smart background sync with per-table cadence
-- Git-based team dashboard sharing
-
-## What it is
-
-finch-epm is a Python package you install on your own computer. It connects to your own data sources using your own credentials, builds a local catalog of every table and field it can see, caches the data in an embedded analytical database, and renders dashboards defined in plain `.fdash` files. Dashboards are shareable: send the file to a colleague, and as long as they have valid credentials to the underlying source, finch-epm renders it for them against their own access.
-
-Nothing about your data, your credentials, or your usage ever leaves your machine. There is no finch-epm cloud. There is no account to create. There is no telemetry.
-
-## What it is not
-
-- Not a hosted BI tool. There is no server, no SaaS, no login page.
-- Not a data warehouse. The cache is local and scoped to what you query.
-- Not a replacement for governed enterprise BI. It is a tool for analysts, controllers, and operators who want fast, shareable views of their own systems.
-- Not a way to bypass source-system permissions. Every query runs under the user's own credentials and respects whatever access they have.
+**AI builds dashboards.** Any LLM (Claude, GPT, Gemini, Ollama, or any MCP client) can generate dashboards from a plain-English prompt, grounded in your actual data schema.
 
 ## Install
 
@@ -67,211 +20,115 @@ Nothing about your data, your credentials, or your usage ever leaves your machin
 pip install finch-epm
 ```
 
-Requires Python 3.10 or later. Works on macOS, Linux, and Windows.
+Requires Python 3.10+. Works on Windows, macOS, and Linux.
 
-## Quick start
+For IT deployment across an organization:
 
-### 1. Authenticate
-
-Import your NetSuite credentials into the OS keychain. This reads the `.env` and private key file once, stores them securely, and never touches the files again.
-
-```
-finch-epm auth -c netsuite -p production \
-  --env-file /path/to/.env \
-  --key-file /path/to/private.pem
+```powershell
+# Push via Intune, SCCM, or GPO
+.\installer\deploy.ps1
 ```
 
-The `.env` file should contain:
+## For IT administrators
+
+### First-time setup
 
 ```
-NS_ACCOUNT_ID=your_account_id
-NS_CLIENT_ID=your_client_id
-NS_CERTIFICATE_ID=your_certificate_id
-NS_PRIVATE_KEY_PATH=path/to/private.pem
+finch-epm setup
 ```
 
-Validate that credentials work:
+The wizard walks through:
+1. Connecting data sources (NetSuite, SQL Server, etc.)
+2. Syncing all data to the local cache (runs in background, ~15-30 min)
+3. Auto-generating a chart of accounts from your GL
+4. Importing or creating the compilation map that links your data sources
+
+### Compilation map
+
+The compilation map is the single source of truth that links all data sources together. It maps NetSuite Location IDs to SQL Server Divisions through a shared reference table, defines rollup hierarchies (Site -> Group -> State), and configures binary flags (Active, Terminated, CoreFY25).
 
 ```
-finch-epm auth -c netsuite -p production --validate
+finch-epm map setup          # Interactive: detect reference tables, configure links
+finch-epm map show           # View the current map
+finch-epm map import map.yaml    # Import a team-shared map
+finch-epm map use "\\server\share\compilation_map.yaml"   # Point all users to one shared file
 ```
 
-### 2. Crawl the schema
+### Chart of accounts
 
-Discover every table, column, custom field, and dimension in your NetSuite instance:
-
-```
-finch-epm catalog --crawl -c netsuite -p production
-```
-
-This probes all known NetSuite record types and reports three states for each: accessible, restricted (exists but your role lacks permission), and not found (not present in your instance).
-
-Browse the results:
+The chart of accounts defines how GL accounts roll up into P&L sections. Unlimited hierarchy levels. Importable from YAML, JSON, or CSV templates. Shareable across the team.
 
 ```
-finch-epm catalog --tables -c netsuite -p production
-finch-epm catalog --tables --accessible-only -c netsuite -p production
-finch-epm catalog --columns Transaction -c netsuite -p production
-finch-epm catalog --dimensions -c netsuite -p production
+finch-epm coa setup           # Auto-generate from cached Account data
+finch-epm coa import team.yaml    # Import a team template
+finch-epm coa show            # View the hierarchy
+finch-epm coa edit            # Open in your editor
 ```
 
-### 3. Sync data
+### Silent deployment
 
-Pull data from NetSuite into your local DuckDB cache:
-
-```
-finch-epm sync -c netsuite -p production -t Account -t Subsidiary -t Department
-finch-epm sync -c netsuite -p production -t TransactionAccountingLine --full
-finch-epm sync -c netsuite -p production --all --incremental
-```
-
-After sync, your data is queryable locally at millisecond speed. No network calls.
-
-### 4. Open a dashboard
+Pre-load a configuration bundle so users never run setup:
 
 ```
-finch-epm open path/to/dashboard.fdash
+finch-epm setup --config "\\server\share\finch-epm-config\"
 ```
 
-This launches a local web server and opens the dashboard in your browser. The dashboard renders immediately against cached data with a staleness indicator.
+The config directory contains `compilation_map.yaml`, `coa.yaml`, and `flags.yaml`. Every machine gets the same configuration.
 
-## Dashboard format
+## For end users
 
-Dashboards are `.fdash` files. The contents are YAML; the extension is finch-epm-specific so that the desktop installer can claim the file association cleanly. A minimal example:
+### Open a dashboard
 
-```yaml
-name: Site P&L
-description: Revenue and expense by site, current quarter
-sources:
-  - netsuite
-
-queries:
-  - name: site_pl
-    sql: |
-      SELECT
-        site,
-        SUM(CASE WHEN account_type = 'Income' THEN amount ELSE 0 END) AS revenue,
-        SUM(CASE WHEN account_type = 'Expense' THEN amount ELSE 0 END) AS expense
-      FROM gl_detail
-      WHERE period BETWEEN :start_period AND :end_period
-      GROUP BY site
-
-parameters:
-  start_period:
-    type: period
-    default: current_quarter_start
-  end_period:
-    type: period
-    default: current_quarter_end
-
-charts:
-  - type: bar
-    title: Revenue by Site
-    data: site_pl
-    x: site
-    y: revenue
-  - type: table
-    title: P&L Detail
-    data: site_pl
-```
-
-Dashboards are portable. They contain no data, no credentials, and no machine-specific paths. Share them via email, GitHub, Slack, or any other channel.
-
-## Built-in chart types
-
-- Table
-- Bar
-- Line
-- Area
-- KPI tile
-- Pivot
-- Time series
-- Scatter
-- Variance table (actual vs budget with automatic delta calculation)
-- Custom (Vega-Lite specification for any visualization)
-
-Each chart type implements a generic chart renderer interface. Custom charts use Vega-Lite specs, so any visualization not covered by built-in types can be added without touching the rendering pipeline.
-
-## How it works
-
-finch-epm has four layers, each designed to be extended without rewriting the others:
-
-1. **Connectors.** A connector is an adapter for a specific kind of data source. Seven connectors ship today: NetSuite (SuiteQL + REST metadata), SQL Server, PostgreSQL, Snowflake, BigQuery, Generic ODBC, and a Fake connector for testing. Each connector implements a small abstract interface -- `list_dimensions`, `get_hierarchy`, `fetch_facts`, `introspect_schema`, `plan_scope` -- that the rest of the system depends on. New connectors are added by implementing the interface; the catalog, cache, and renderer never change.
-
-2. **Catalog.** The catalog is a local DuckDB database that stores the schema discovered by introspection: table names, column types, access status, dimensional hierarchies, and category metadata. The catalog tracks every record type the source exposes, including those the current user cannot access, so users always know what exists versus what their role can see.
-
-3. **Cache.** The cache is also DuckDB, storing the actual fact and dimension data pulled from the source. Sync is incremental and scoped -- finch-epm only pulls the data that dashboards actually need, watermarked by last-modified date where the source supports it. DuckDB handles tens to hundreds of millions of rows comfortably on a laptop. The cache layer exposes a generic query interface, so v0.4's planned federated mode (where queries against fast remote backends like Snowflake are pushed down to the source instead of cached locally) can plug in without changing the renderer.
-
-4. **Dashboard runtime.** A small local web server reads the `.fdash` file, resolves logical names against the catalog, executes queries against the cache (or, in federated mode, pushes them down), and renders the results in a browser. Charts are interactive. Filters re-run queries against the local engine, so interactivity is instantaneous. The renderer talks to a chart interface, not to specific chart implementations, so adding new chart types does not require rewriting any built-in chart.
-
-## Security model
-
-Credentials are stored in the operating system's native credential manager (Windows Credential Manager, macOS Keychain, or Linux Secret Service) via the `keyring` library. They are never written to disk in plaintext, never stored in environment variables at runtime, and never included in dashboard files.
-
-Authentication to NetSuite uses OAuth 2.0 Client Credentials with certificate-based JWT signing (ES256 or PS256 depending on key type). Access tokens are short-lived and refresh automatically.
-
-Multiple named profiles are supported per connector type. A team can share one NetSuite integration record while each user's permissions determine what data they see.
-
-## NetSuite permissions
-
-The connecting role needs:
-
-- OAuth 2.0 client credentials authentication enabled (integration record in NetSuite)
-- A certificate mapped to the integration
-- Read access to the record types you want to query
-- Permission to run SuiteQL queries via the REST API
-
-finch-epm introspects all record types exhaustively and reports which ones are accessible, restricted, or not found for the current role.
-
-## Performance
-
-Queries run against a local columnar engine, so typical dashboard interactions -- filters, drilldowns, period changes -- return in milliseconds. The slow path is the initial sync from the source system, which is bounded by the source's API throughput and rate limits. finch-epm mitigates this with scoped sync, incremental watermarks, and background refresh.
-
-DuckDB compresses analytical data well; expect roughly 5-10x compression over raw row data. A few years of GL detail for a mid-sized company is typically a few hundred megabytes on disk.
-
-## Roadmap
-
-**v0.1 (complete).** NetSuite connector. DuckDB catalog and cache. `.fdash` dashboard format. Eight built-in chart types. Local web renderer. CLI: `setup`, `auth`, `sync`, `open`, `catalog`. Pip install only.
-
-**v0.2 (complete).** SQL Server and Postgres connectors. Desktop installer infrastructure (PyInstaller). Scheduled background sync service. Dashboard parameters, filters, and cross-chart filtering. CSV/Excel file import. Multi-page tabbed dashboards. Variance tables. IT deployment script.
-
-**v0.3 (complete).** Snowflake, BigQuery, and Generic ODBC connectors. Custom chart types via Vega-Lite specs. Configurable P&L engine with user-defined chart of accounts. Dimension mapping layer for rollups and flag filters.
-
-**v0.4 (complete).** Plugin API for third-party connectors. Table namespacing for multi-source cache. Semantic layer for cross-source logical models. Federated query mode for fast remote backends.
-
-**v0.5 (in progress).** Provider-agnostic AI dashboard generation. MCP server. Visual overhaul with themes. Optional self-hosted IT governance gateway. Smarter background sync. Git-based team collaboration.
-
-The architecture is built so that every item on this roadmap can be added without rewriting the core.
-
-## AI dashboard generation
-
-Any LLM can generate dashboards for you. Configure your preferred provider once, then ask for dashboards in plain English:
+Double-click any `.fdash` file. Or from the command line:
 
 ```
-finch-epm llm configure            # Pick a provider and enter your API key
-finch-epm ask "build me a site P&L dashboard"
-finch-epm ask "monthly revenue trend by subsidiary" --open
+finch-epm open dashboard.fdash
 ```
 
-Supported providers: Anthropic (Claude), OpenAI (GPT), Google (Gemini), Ollama (local models), or any OpenAI-compatible endpoint (LM Studio, vLLM, Together, Groq, OpenRouter).
-
-The `ask` command reads your actual data catalog and sample rows, sends them to the LLM as context, and validates the generated `.fdash` file. If validation fails, it automatically feeds the errors back for self-correction. The result is a working dashboard grounded in your real schema.
-
-Configure multiple LLM profiles for different use cases:
+### Generate a dashboard with AI
 
 ```
-finch-epm llm configure --name work       # Anthropic for work
-finch-epm llm configure --name personal   # Local Ollama for personal
-finch-epm ask "expense breakdown" --llm-profile personal
+finch-epm ask "build me a P&L dashboard by subsidiary" --open
+finch-epm ask "monthly revenue trend" --open
+finch-epm ask "top 10 expenses by department" --open
 ```
 
-Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`) work too -- no configuration needed if one is set.
+Works with any LLM: Anthropic (Claude), OpenAI (GPT), Google (Gemini), Ollama (local), or any OpenAI-compatible endpoint.
+
+### Share a dashboard
+
+Send the `.fdash` file to a colleague. They open it and see the same dashboard rendered against their own data access. No data in the file, no credentials, no server.
+
+## Data sources
+
+| Connector | Authentication | Notes |
+|-----------|---------------|-------|
+| NetSuite | OAuth 2.0 + certificate | Full SuiteQL access, all record types |
+| SQL Server | Username/password | Azure SQL and on-prem |
+| PostgreSQL | Username/password | Any Postgres-compatible |
+| Snowflake | Username/password | Warehouse, database, schema |
+| BigQuery | Service account JSON | Project and dataset |
+| Generic ODBC | Connection string | OneStream, SAP, Oracle, Access |
+
+All credentials are stored in the OS keychain (Windows Credential Manager, macOS Keychain, Linux Secret Service). Never written to disk in plaintext.
+
+## Dashboard features
+
+- 10 chart types: bar, line, area, scatter, time series, KPI, table, pivot, variance table, custom (Vega-Lite)
+- 7 built-in themes: modern_light, modern_dark, financial, financial_terminal, executive, wsj, monospace
+- Multi-page tabbed dashboards with shared filters
+- Cross-chart filtering (click a bar to filter all other charts)
+- Variance mode: actual vs budget with green/red delta coloring
+- Layout control: full, half, third, quarter width
+- Brand block: company logo, name, and footer
+- Custom CSS injection (scoped to the dashboard)
+- Markdown narrative blocks with value substitution
+- Print support with color preservation
+- Graceful degradation: missing data shows actionable error messages, not blank charts
 
 ## MCP server
 
-finch-epm is a first-class MCP server. Any MCP-capable AI client can connect and get live, grounded access to your data catalog and cache.
-
-Add to Claude Desktop (`claude_desktop_config.json`):
+finch-epm is a first-class MCP server. Claude Desktop, Claude Code, Cursor, and any MCP client can interact with your data catalog and cache.
 
 ```json
 {
@@ -284,15 +141,26 @@ Add to Claude Desktop (`claude_desktop_config.json`):
 }
 ```
 
-Or for Claude Code:
+10 tools (list tables, query cache, validate dashboards, etc.) and 4 resources (dashboard spec, catalog, themes, examples). SQL injection protection via sqlglot. See `docs/mcp.md`.
 
-```
-claude mcp add finch-epm -- finch-epm mcp
-```
+## Architecture
 
-The server exposes 10 tools (list tables, describe columns, preview rows, query cache, validate and write dashboards) and 4 resources (the .fdash spec, catalog summaries, themes, and examples). SQL queries are parsed via sqlglot and restricted to read-only SELECT statements.
+Four layers, each independently extensible:
 
-See `docs/mcp.md` for configuration snippets for Cursor, ChatGPT Desktop, and generic MCP clients.
+1. **Connectors** — adapters for each data source (7 built-in, plugin API for more)
+2. **Catalog** — DuckDB-backed schema store with access status tracking
+3. **Cache** — DuckDB data cache with incremental sync, deduplication, and watermarks
+4. **Dashboard** — `.fdash` parser, theme engine, chart renderers, and local web server
+
+The compilation map and chart of accounts sit on top of these layers, providing the business logic that turns raw data into structured financial reports.
+
+## Security
+
+- Credentials in OS keychain, never in plaintext files
+- No telemetry, no cloud, no accounts to create
+- Data stays on your machine (or your company's network)
+- Source-system permissions are respected — finch-epm shows what your role can see
+- MCP query_cache tool restricted to read-only SELECT statements
 
 ## Development
 
@@ -303,11 +171,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-See `CONTRIBUTING.md` for architecture details, how to add connectors, and testing patterns.
-
-## Contributing
-
-finch-epm is open source under the MIT license. The Connector interface and ChartRenderer interface are the two main extension points -- if you want to add support for a new data source or chart type, implement the relevant interface and submit a pull request. See `CONTRIBUTING.md` for details.
+383 tests. See `CONTRIBUTING.md` for architecture details.
 
 ## License
 

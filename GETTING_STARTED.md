@@ -1,195 +1,185 @@
 # Getting Started with finch-epm
 
-This guide walks you through installing finch-epm, connecting your data sources, and opening your first dashboard.
+finch-epm has two audiences. **IT administrators** handle the one-time setup: installing the software, connecting data sources, syncing data, and configuring the compilation map and chart of accounts. **End users** (CFOs, controllers, analysts) just open dashboards — they never need to touch a terminal.
 
-## Step 1: Install
+---
+
+## Part 1: IT Administrator Setup
+
+### Install
 
 ```
 pip install finch-epm
 ```
 
-Requires Python 3.10 or later. Works on Windows, macOS, and Linux.
-
-Optional connectors (install only what you need):
+Requires Python 3.10+. Optional connectors:
 
 ```
 pip install finch-epm[sqlserver]     # SQL Server / Azure SQL
 pip install finch-epm[postgres]      # PostgreSQL
 pip install finch-epm[snowflake]     # Snowflake
 pip install finch-epm[bigquery]      # Google BigQuery
+pip install finch-epm[mcp]           # MCP server for AI clients
 pip install finch-epm[all]           # Everything
 ```
 
-## Step 2: Run setup
+For organization-wide deployment, use the PowerShell script:
+
+```powershell
+.\installer\deploy.ps1
+```
+
+This installs Python, finch-epm, registers the `.fdash` file association, and sets up a scheduled sync task. Pushable via Intune, SCCM, or GPO.
+
+### Run the setup wizard
 
 ```
 finch-epm setup
 ```
 
-The setup wizard will:
+The wizard walks through:
 
-1. Ask which data source you want to connect (NetSuite, SQL Server, PostgreSQL, Snowflake, BigQuery, or any ODBC source)
-2. Show you exactly what credentials and permissions you need
-3. Import your credentials securely into the OS keychain
-4. Validate the connection against the live system
-5. Discover all tables and fields available to you
-6. Offer to set up automatic background sync
-7. Start syncing data in the background so dashboards are ready when you need them
+1. **Connect data sources** — NetSuite, SQL Server, PostgreSQL, Snowflake, BigQuery, or ODBC. Credentials are stored in the OS keychain, never in plaintext.
+2. **Crawl schemas** — discovers every table, column, and dimension in each source.
+3. **Sync data** — pulls all data into the local DuckDB cache. Runs in the background. First sync takes 15-30 minutes for large datasets (e.g., 700K+ GL rows). After that, incremental syncs take seconds.
+4. **Generate chart of accounts** — auto-creates a P&L hierarchy from your GL account data. Customize it later with `finch-epm coa edit`.
+5. **Configure compilation map** — the single source of truth that links all your data sources together.
 
-You can add multiple data sources in one setup session. Each gets its own named profile.
+### What you need before setup
 
-## What you need before setup
+**NetSuite**: Integration record with OAuth 2.0, certificate, role with SuiteQL permissions, `.env` file with account/client/cert IDs, private key PEM.
 
-### NetSuite
+**SQL Server**: Login with SELECT permissions, ODBC Driver 17/18, `.env` with server/database/username/password.
 
-- An Integration record in NetSuite with OAuth 2.0 Client Credentials enabled
-- A certificate (EC or RSA key pair) uploaded to the integration
-- A role with these permissions: SuiteQL (Reports), REST Web Services (Setup), read access on the record types you want to query
-- A `.env` file with your account ID, client ID, and certificate ID
-- The private key PEM file matching the uploaded certificate
+**PostgreSQL**: User with SELECT, `.env` with host/port/database/username/password.
 
-### SQL Server / Azure SQL
+**Snowflake**: Account + warehouse, `.env` with account/warehouse/database/schema/user/password.
 
-- A SQL login with SELECT permissions on the tables you want
-- An ODBC driver installed (ODBC Driver 17 or 18 for SQL Server)
-- A `.env` file with your server, database, username, and password
-- For Azure SQL: the server FQDN ends in `.database.windows.net`
+**BigQuery**: Service account JSON key with Data Viewer role, `.env` with project/dataset/key path.
 
-### PostgreSQL
+**ODBC**: Driver installed, `.env` with connection string.
 
-- A database user with SELECT permissions
-- A `.env` file with host, port, database, username, and password
+### Configure the compilation map
 
-### Snowflake
-
-- A Snowflake account with a compute warehouse
-- A `.env` file with account, warehouse, database, schema, username, and password
-
-### BigQuery
-
-- A GCP project with BigQuery enabled
-- A service account JSON key file with BigQuery Data Viewer role
-- A `.env` file with project ID, dataset name, and the path to the JSON key
-
-### ODBC (OneStream, SAP, Oracle, etc.)
-
-- An ODBC driver for your data source installed on your machine
-- A `.env` file with the full ODBC connection string
-
-## Step 3: Open a dashboard
-
-After setup, your data syncs automatically in the background. Open a template dashboard to see it working:
+After sync completes, set up the map that links your data sources:
 
 ```
+finch-epm map setup
+```
+
+The wizard detects reference tables (Location, Department, Entity) and walks you through:
+- Which table is the master reference (e.g., `IFSLocations`)
+- Which columns are the ID and display name
+- Which columns are rollup levels (Site, Group, State)
+- Which columns are binary flags (Active, Terminated, CoreFY25)
+- Which fact tables link to this reference
+
+The result is one `compilation_map.yaml` that every dashboard uses.
+
+### Share the configuration
+
+Copy these files to a network share so every user gets the same setup:
+
+```
+finch-epm map show      # Shows file path
+finch-epm coa show      # Shows file path
+```
+
+The compilation map, chart of accounts, and flag definitions are all portable YAML files.
+
+### Silent deployment for multiple machines
+
+Pre-build a config bundle (compilation_map.yaml + coa.yaml + flags.yaml) and deploy:
+
+```
+finch-epm setup --config "\\server\share\finch-epm-config\"
+```
+
+Or point all users to a shared compilation map:
+
+```
+finch-epm map use "\\server\share\compilation_map.yaml"
+```
+
+Every machine that runs this command shares the same map. When finance updates a site (terminates a location, adds CoreFY27), they update the map on the share and every user's dashboards pick up the change.
+
+### Ongoing maintenance
+
+The background sync keeps data fresh automatically. To check status:
+
+```
+finch-epm sync -c netsuite -p production --all --incremental   # Manual sync
+finch-epm service                                               # Run continuous sync
+finch-epm classify                                              # Review unclassified items
+finch-epm coa unmapped                                          # Check unmapped GL accounts
+```
+
+---
+
+## Part 2: End User Guide
+
+### Open a dashboard
+
+Double-click any `.fdash` file. Or from the command line:
+
+```
+finch-epm open dashboard.fdash
+```
+
+The dashboard opens in your browser with live data, filters, and charts.
+
+### Use filters
+
+Dashboards have dropdown filters at the top (Year, Subsidiary, Department, etc.). Select a value to filter all charts. Click a bar in a chart to cross-filter other charts.
+
+### Generate a dashboard with AI
+
+If your IT team has configured an LLM provider:
+
+```
+finch-epm ask "build me a P&L dashboard by subsidiary" --open
+finch-epm ask "monthly revenue trend" --open
+finch-epm ask "expense breakdown by department" --open
+```
+
+The AI reads your actual data schema and generates a working dashboard.
+
+### Share a dashboard
+
+Send the `.fdash` file to anyone on your team via email, Slack, or Teams. They open it and see the same layout rendered against their own data access. The file contains no data — just the dashboard definition.
+
+### Templates
+
+finch-epm ships with example dashboards:
+
+```
+finch-epm open examples/netsuite_gl_overview.fdash
 finch-epm open examples/multi_tab_financial.fdash
 ```
 
-This opens a tabbed dashboard in your browser with charts, KPI tiles, and tables rendered against your locally cached data.
-
-## Step 4: Build your own dashboard
-
-There are three ways to create dashboards:
-
-### Option A: Use AI (any LLM provider)
-
-Configure your preferred LLM provider once:
-
-```
-finch-epm llm configure
-```
-
-Pick from: Anthropic (Claude), OpenAI (GPT), Google (Gemini), Ollama (local models), or any OpenAI-compatible endpoint.
-
-Then generate dashboards in plain English:
-
-```
-finch-epm ask "build me a site P&L dashboard"
-finch-epm ask "monthly revenue trend by subsidiary" --open
-finch-epm ask "top 10 customers by revenue" -c netsuite -p production
-```
-
-The `ask` command loads your catalog, builds a context-rich prompt with real table names and sample data, and validates the output. If the LLM makes an error, it automatically retries with the validation feedback.
-
-You can also use Claude Code's `/dashboard` command, paste `DASHBOARDS.md` into any AI chat, or use finch-epm's MCP server with any MCP-capable client (Claude Desktop, Cursor, etc.).
-
-### Option B: Copy and modify a template
-
-Look in the `examples/` directory for ready-made dashboards:
-
-| Template | What it shows |
-|---|---|
-| `netsuite_gl_overview.fdash` | Revenue, expense, subsidiary breakdown from NetSuite GL |
-| `multi_tab_financial.fdash` | Multi-tab: P&L, Revenue Cycle, Organization |
-| `cfo_ar_timing.fdash` | AR timing, cash collection, payor analysis |
-| `cfo_payor_analysis.fdash` | Payor class breakdown with yield percentages |
-| `account_overview.fdash` | Account types, subsidiaries, departments |
-| `site_pl.fdash` | Site-level P&L (minimal example) |
-
-Copy any of these, modify the SQL queries to match your data, and open it.
-
-### Option C: Write from scratch
-
-See `DASHBOARDS.md` for the complete specification. A minimal dashboard:
-
-```yaml
-name: My Dashboard
-sources:
-  - netsuite
-
-queries:
-  - name: summary
-    sql: SELECT accttype, COUNT(*) AS count FROM Account GROUP BY accttype
-
-charts:
-  - type: bar
-    title: Accounts by Type
-    data: summary
-    x: accttype
-    y: count
-```
-
-Save as `my_dashboard.fdash` and open with `finch-epm open my_dashboard.fdash`.
-
-## Step 5: Share a dashboard
-
-Send any `.fdash` file to a colleague via email, Slack, Teams, or GitHub. They:
-
-1. Install finch-epm
-2. Run `finch-epm setup` with their own credentials
-3. Open the `.fdash` file with `finch-epm open your_file.fdash`
-
-The dashboard renders against their own data access. No data is stored in the file.
-
-## Step 6: Import CSV or Excel data
-
-You can load files directly into the local cache alongside database data:
+### Import budget or forecast data
 
 ```
 finch-epm import budget_2024.csv
-finch-epm import reference.xlsx --sheet Locations --table locations
+finch-epm import forecast.xlsx --sheet Q4 --table forecast_q4
 ```
 
-The imported data becomes a table you can query in `.fdash` SQL.
+Imported data becomes queryable in dashboards alongside synced data.
 
-## Useful commands
-
-```
-finch-epm catalog --tables -c netsuite -p production    # See available tables
-finch-epm catalog --columns Account -c netsuite -p production  # See columns
-finch-epm sync -c netsuite -p production -t Account     # Manually sync a table
-finch-epm service                                       # Run sync service
-finch-epm import data.csv                               # Import a file
-finch-epm open dashboard.fdash                          # Open a dashboard
-```
+---
 
 ## Where things are stored
 
-| What | Where |
-|---|---|
-| Cached data | `AppData/Local/finch-epm/cache.duckdb` (Windows) |
-| Schema catalog | `AppData/Local/finch-epm/catalog.duckdb` |
-| Profile config | `AppData/Local/finch-epm/profiles.json` |
+| What | Location (Windows) |
+|------|-------------------|
+| Cached data | `%LOCALAPPDATA%\finch-epm\cache.duckdb` |
+| Schema catalog | `%LOCALAPPDATA%\finch-epm\catalog.duckdb` |
+| Compilation map | `%LOCALAPPDATA%\finch-epm\compilation_map.yaml` |
+| Chart of accounts | `%LOCALAPPDATA%\finch-epm\coa.yaml` |
+| Flag definitions | `%LOCALAPPDATA%\finch-epm\flags.yaml` |
+| Profile config | `%LOCALAPPDATA%\finch-epm\profiles.json` |
 | Credentials | Windows Credential Manager (never on disk) |
-| Sync config | `AppData/Local/finch-epm/sync_service.json` |
-| Dashboard spec | `DASHBOARDS.md` in the finch-epm repository |
-| Templates | `examples/` directory |
+| Sync config | `%LOCALAPPDATA%\finch-epm\sync_service.json` |
+
+On macOS: `~/Library/Application Support/finch-epm/`
+On Linux: `~/.local/share/finch-epm/`
