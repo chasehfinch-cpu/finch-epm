@@ -72,9 +72,10 @@ filters:
   - name: entity
     label: Entity
     query: >
-      SELECT DISTINCT EntityName AS entity
-      FROM ss__dbo__IFSEntities
-      ORDER BY EntityName
+      SELECT DISTINCT name AS entity
+      FROM Subsidiary
+      WHERE isinactive = 'F' AND name NOT LIKE '%limination%'
+      ORDER BY name
     parameter: selected_entity
 
 # ═══════════════════════════════════════════════════════════════════
@@ -98,32 +99,14 @@ queries:
             THEN CAST(t.amount AS DOUBLE) ELSE 0 END)
         / NULLIF(SUM(CASE WHEN a.accttype IN ('Income','OthIncome')
             THEN CAST(t.amount AS DOUBLE) * -1 ELSE 0 END), 0) * 100, 1) AS expense_ratio
-      FROM TransactionAccountingLine t
+      FROM ns__TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
-      JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
-      JOIN TransactionLine tl
-        ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
-        AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
-      LEFT JOIN ss__dbo__IFSLocations loc
-        ON 'L' || CAST(tl.location AS VARCHAR) = loc.LocationID
-      LEFT JOIN ss__dbo__IFSDepartments dept
-        ON 'D' || CAST(tl.department AS VARCHAR) = dept.DepartmentID
-      LEFT JOIN ss__dbo__IFSEntities ent
-        ON 'E' || CAST(tl.subsidiary AS VARCHAR) = ent.EntityID
+      JOIN ns__Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      LEFT JOIN Subsidiary sub ON CAST(tx.entity AS INTEGER) = CAST(sub.id AS INTEGER)
+      LEFT JOIN ss__dbo__IFSEntities ent ON sub.name = ent.EntityName
       WHERE t.posting = 'T'
         AND (:selected_year IS NULL OR SPLIT_PART(tx.trandate, '/', 3) = :selected_year)
-        AND (:selected_group IS NULL OR loc.GroupRollup = :selected_group)
-        AND (:selected_location IS NULL OR loc.LocationName = :selected_location)
-        AND (:selected_department IS NULL OR dept.DepartmentRollup = :selected_department)
-        AND (:selected_entity IS NULL OR ent.EntityName = :selected_entity)
-        AND (:selected_status IS NULL
-             OR (:selected_status = 'Active' AND loc.ActiveBusiness = 1)
-             OR (:selected_status = 'Terminated' AND loc.TerminatedBusiness = 1)
-             OR (:selected_status = 'Unused' AND loc.Unused = 1))
-        AND (:selected_core_year IS NULL
-             OR (:selected_core_year = 'Core FY26' AND loc.CoreFY26 = 1)
-             OR (:selected_core_year = 'Core FY25' AND loc.CoreFY25 = 1)
-             OR (:selected_core_year = 'Core FY24' AND loc.CoreFY24 = 1))
+        AND (:selected_entity IS NULL OR sub.name = :selected_entity)
 
   # --- Monthly P&L by account type ---
   - name: monthly_pl
@@ -140,9 +123,9 @@ queries:
         SUM(CASE WHEN a.accttype IN ('Income','OthIncome')
             THEN CAST(t.amount AS DOUBLE) * -1
             ELSE CAST(t.amount AS DOUBLE) END) AS amount
-      FROM TransactionAccountingLine t
+      FROM ns__TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
-      JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN ns__Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
       JOIN TransactionLine tl
         ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
         AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
@@ -152,18 +135,7 @@ queries:
       WHERE t.posting = 'T'
         AND a.accttype IN ('Income','OthIncome','Expense','OthExpense','COGS','DeferExpense')
         AND (:selected_year IS NULL OR SPLIT_PART(tx.trandate, '/', 3) = :selected_year)
-        AND (:selected_group IS NULL OR loc.GroupRollup = :selected_group)
-        AND (:selected_location IS NULL OR loc.LocationName = :selected_location)
-        AND (:selected_department IS NULL OR dept.DepartmentRollup = :selected_department)
-        AND (:selected_entity IS NULL OR ent.EntityName = :selected_entity)
-        AND (:selected_status IS NULL
-             OR (:selected_status = 'Active' AND loc.ActiveBusiness = 1)
-             OR (:selected_status = 'Terminated' AND loc.TerminatedBusiness = 1)
-             OR (:selected_status = 'Unused' AND loc.Unused = 1))
-        AND (:selected_core_year IS NULL
-             OR (:selected_core_year = 'Core FY26' AND loc.CoreFY26 = 1)
-             OR (:selected_core_year = 'Core FY25' AND loc.CoreFY25 = 1)
-             OR (:selected_core_year = 'Core FY24' AND loc.CoreFY24 = 1))
+        AND (:selected_entity IS NULL OR sub.name = :selected_entity)
       GROUP BY account, month
       ORDER BY account, month
 
@@ -176,9 +148,9 @@ queries:
             THEN CAST(t.amount AS DOUBLE) * -1 ELSE 0 END) AS revenue,
         SUM(CASE WHEN a.accttype IN ('Expense','OthExpense','COGS','DeferExpense')
             THEN CAST(t.amount AS DOUBLE) ELSE 0 END) AS expense
-      FROM TransactionAccountingLine t
+      FROM ns__TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
-      JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN ns__Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
       JOIN TransactionLine tl
         ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
         AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
@@ -187,18 +159,7 @@ queries:
       LEFT JOIN ss__dbo__IFSEntities ent ON 'E' || CAST(tl.subsidiary AS VARCHAR) = ent.EntityID
       WHERE t.posting = 'T'
         AND (:selected_year IS NULL OR SPLIT_PART(tx.trandate, '/', 3) = :selected_year)
-        AND (:selected_group IS NULL OR loc.GroupRollup = :selected_group)
-        AND (:selected_location IS NULL OR loc.LocationName = :selected_location)
-        AND (:selected_department IS NULL OR dept.DepartmentRollup = :selected_department)
-        AND (:selected_entity IS NULL OR ent.EntityName = :selected_entity)
-        AND (:selected_status IS NULL
-             OR (:selected_status = 'Active' AND loc.ActiveBusiness = 1)
-             OR (:selected_status = 'Terminated' AND loc.TerminatedBusiness = 1)
-             OR (:selected_status = 'Unused' AND loc.Unused = 1))
-        AND (:selected_core_year IS NULL
-             OR (:selected_core_year = 'Core FY26' AND loc.CoreFY26 = 1)
-             OR (:selected_core_year = 'Core FY25' AND loc.CoreFY25 = 1)
-             OR (:selected_core_year = 'Core FY24' AND loc.CoreFY24 = 1))
+        AND (:selected_entity IS NULL OR sub.name = :selected_entity)
       GROUP BY month
       ORDER BY month
 
@@ -208,9 +169,9 @@ queries:
       SELECT
         COALESCE(loc.GroupRollup, '(Unmapped)') AS group_name,
         SUM(CAST(t.amount AS DOUBLE)) * -1 AS revenue
-      FROM TransactionAccountingLine t
+      FROM ns__TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
-      JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN ns__Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
       JOIN TransactionLine tl
         ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
         AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
@@ -237,25 +198,16 @@ queries:
       SELECT
         COALESCE(ent.EntityName, '(Unmapped)') AS entity,
         SUM(CAST(t.amount AS DOUBLE)) * -1 AS revenue
-      FROM TransactionAccountingLine t
+      FROM ns__TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
-      JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN ns__Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
       JOIN TransactionLine tl
         ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
         AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
-      LEFT JOIN ss__dbo__IFSEntities ent ON 'E' || CAST(tl.subsidiary AS VARCHAR) = ent.EntityID
-      LEFT JOIN ss__dbo__IFSLocations loc ON 'L' || CAST(tl.location AS VARCHAR) = loc.LocationID
+      LEFT JOIN Subsidiary sub ON CAST(tx.entity AS INTEGER) = CAST(sub.id AS INTEGER)
       WHERE t.posting = 'T' AND a.accttype IN ('Income','OthIncome')
         AND (:selected_year IS NULL OR SPLIT_PART(tx.trandate, '/', 3) = :selected_year)
-        AND (:selected_group IS NULL OR loc.GroupRollup = :selected_group)
-        AND (:selected_entity IS NULL OR ent.EntityName = :selected_entity)
-        AND (:selected_status IS NULL
-             OR (:selected_status = 'Active' AND loc.ActiveBusiness = 1)
-             OR (:selected_status = 'Terminated' AND loc.TerminatedBusiness = 1))
-        AND (:selected_core_year IS NULL
-             OR (:selected_core_year = 'Core FY26' AND loc.CoreFY26 = 1)
-             OR (:selected_core_year = 'Core FY25' AND loc.CoreFY25 = 1)
-             OR (:selected_core_year = 'Core FY24' AND loc.CoreFY24 = 1))
+        AND (:selected_entity IS NULL OR sub.name = :selected_entity)
       GROUP BY entity
       HAVING SUM(CAST(t.amount AS DOUBLE)) * -1 > 0
       ORDER BY revenue DESC
@@ -266,9 +218,9 @@ queries:
       SELECT
         COALESCE(dept.DepartmentRollup, '(Unmapped)') AS department,
         SUM(CAST(t.amount AS DOUBLE)) AS expense
-      FROM TransactionAccountingLine t
+      FROM ns__TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
-      JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN ns__Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
       JOIN TransactionLine tl
         ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
         AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
@@ -307,9 +259,9 @@ queries:
         SUM(CASE WHEN a.accttype IN ('Income','OthIncome')
             THEN CAST(t.amount AS DOUBLE) * -1
             ELSE CAST(t.amount AS DOUBLE) * -1 END) AS amount
-      FROM TransactionAccountingLine t
+      FROM ns__TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
-      JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN ns__Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
       JOIN TransactionLine tl
         ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
         AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
@@ -349,9 +301,9 @@ queries:
         SUM(CASE WHEN a.accttype IN ('Income','OthIncome')
             THEN CAST(t.amount AS DOUBLE) * -1
             ELSE CAST(t.amount AS DOUBLE) END) AS amount
-      FROM TransactionAccountingLine t
+      FROM ns__TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
-      JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN ns__Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
       JOIN TransactionLine tl
         ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
         AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
