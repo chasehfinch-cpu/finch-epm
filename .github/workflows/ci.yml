@@ -19,7 +19,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev,mcp]"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Install MCP (Windows only, requires pywin32)
+        if: runner.os == 'Windows'
+        run: pip install "mcp>=1.0"
       - run: pytest --tb=short -q
       - run: ruff check src/finch_epm/
 

@@ -2,6 +2,9 @@
 
 Uses in-memory DuckDB and FakeConnector fixtures. No real MCP transport
 is involved -- we call the tool functions directly via the FastMCP server.
+
+Requires the ``mcp`` optional dependency (which requires pywin32 on Windows).
+Skipped on platforms where mcp is not installed.
 """
 
 from __future__ import annotations
@@ -11,10 +14,20 @@ from pathlib import Path
 
 import pytest
 
+try:
+    import mcp  # noqa: F401
+    HAS_MCP = True
+except ImportError:
+    HAS_MCP = False
+
+pytestmark = pytest.mark.skipif(not HAS_MCP, reason="mcp package not installed")
+
+if HAS_MCP:
+    from finch_epm.mcp.server import create_mcp_server
+
 from finch_epm.cache.local import LocalCacheEngine
 from finch_epm.cache.sync import SyncEngine
 from finch_epm.catalog.catalog import CatalogStore
-from finch_epm.mcp.server import create_mcp_server
 from finch_epm.profiles.manager import ProfileManager
 
 
