@@ -90,6 +90,14 @@ def resolve_queries(
 
         semantic_model = load_semantic_model(spec.semantic_model)
 
+    # Load table linker for cross-source JOIN support
+    table_linker = None
+    try:
+        from finch_epm.engine.table_linker import TableLinker
+        table_linker = TableLinker.load()
+    except Exception:
+        pass
+
     for query in spec.queries:
         # Build SQL from semantic model or use raw SQL
         if query.entity and semantic_model:
@@ -106,6 +114,11 @@ def resolve_queries(
             sql = _substitute_parameters(sql, params)
         else:
             sql = _substitute_parameters(query.sql, params)
+
+        # Auto-inject JOINs from table linker when the SQL references
+        # linked tables but doesn't already contain the JOIN.
+        if table_linker and table_linker.links:
+            sql = _inject_linked_joins(sql, table_linker)
 
         # Pre-execution validation: check referenced tables exist
         tables = _extract_table_names(sql)
@@ -228,6 +241,61 @@ def _null_if_unresolved(match: re.Match) -> str:
     if start > 0 and match.string[start - 1] == ":":
         return match.group(0)  # Leave ::TYPE casts alone
     return "NULL"
+
+
+def _inject_linked_joins(sql: str, table_linker: Any) -> str:
+    """Auto-inject JOINs from table_links.yaml into SQL.
+
+    If the SQL references tables that have a configured link but the
+    SQL doesn't already contain a JOIN between them, append the JOIN.
+    This enables cross-source queries to work automatically once the
+    user has set up their table links.
+
+    Only injects joins for tables that appear in the SQL's FROM/JOIN
+    clauses but are not yet joined to each other.
+    """
+    tables_in_sql = _extract_table_names(sql)
+    if len(tables_in_sql) < 2:
+        return sql  # Nothing to link
+
+    sql_upper = sql.upper()
+
+    for link in table_linker.links:
+        src = link.source_table
+        tgt = link.target_table
+
+        # Both tables must be referenced in the query
+        src_in = src in tables_in_sql or src.lower() in [t.lower() for t in tables_in_sql]
+        tgt_in = tgt in tables_in_sql or tgt.lower() in [t.lower() for t in tables_in_sql]
+
+        if not (src_in and tgt_in):
+            continue
+
+        # Check if a JOIN between these tables already exists
+        join_pattern = f"JOIN {tgt}".upper()
+        join_pattern2 = f"JOIN {src}".upper()
+        if join_pattern in sql_upper or join_pattern2 in sql_upper:
+            # Already joined — check if it's between these specific tables
+            if (f"{src}.{link.source_column}".upper() in sql_upper
+                    or f"{tgt}.{link.target_column}".upper() in sql_upper):
+                continue  # Already joined on these columns
+
+        # Inject the JOIN before the WHERE clause (or at the end)
+        join_sql = table_linker.get_join_sql(src, tgt)
+        if join_sql:
+            # Find WHERE clause position to insert before it
+            where_pos = sql.upper().find("WHERE")
+            group_pos = sql.upper().find("GROUP BY")
+            order_pos = sql.upper().find("ORDER BY")
+
+            insert_pos = len(sql)
+            for pos in [where_pos, group_pos, order_pos]:
+                if pos > 0 and pos < insert_pos:
+                    insert_pos = pos
+
+            sql = sql[:insert_pos] + "\n" + join_sql + "\n" + sql[insert_pos:]
+
+    return sql
 
 
 def _resolve_value(value: Any, param: ParameterSpec) -> Any:

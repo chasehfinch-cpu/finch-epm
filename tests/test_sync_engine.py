@@ -67,9 +67,9 @@ class TestIncrementalSync:
         result = cache_engine.execute_query(
             QueryRequest(sql="SELECT COUNT(*) AS cnt FROM fake__gl_detail")
         )
-        # Incremental appends — FakeConnector returns all rows regardless of since
-        # so this will be 20 (10 + 10)
-        assert result.rows[0][0] == 20
+        # Incremental deduplicates by primary key (first column). FakeConnector
+        # returns the same 10 rows, so after dedup + insert the count stays 10.
+        assert result.rows[0][0] == 10
 
     def test_watermark_created(
         self, fake_connector: FakeConnector, cache_engine: LocalCacheEngine

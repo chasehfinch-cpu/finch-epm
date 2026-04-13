@@ -215,6 +215,59 @@ def build_system_prompt(
     except Exception:
         pass  # Classification store not available -- skip
 
+    # Include table links for cross-source JOIN awareness
+    try:
+        from finch_epm.engine.table_linker import TableLinker
+        linker = TableLinker.load()
+        if linker.links:
+            prompt_parts.append("# Cross-Source Table Links\n\n")
+            prompt_parts.append(
+                "The user has linked these tables across data sources. "
+                "Use these links when building JOINs in queries:\n\n"
+            )
+            for link in linker.links:
+                prompt_parts.append(
+                    f"- {link.source_table}.{link.source_column} "
+                    f"<-> {link.target_table}.{link.target_column}\n"
+                )
+            prompt_parts.append("\n")
+        if linker.dimensions:
+            prompt_parts.append("# Dimension Tables\n\n")
+            for dim in linker.dimensions:
+                prompt_parts.append(
+                    f"- {dim.name}: table={dim.dimension_table}, "
+                    f"id={dim.id_column}, label={dim.label_column}, "
+                    f"join on fact.{dim.fact_join_column}\n"
+                )
+                if dim.rollup_columns:
+                    prompt_parts.append(
+                        f"  Rollups: {', '.join(dim.rollup_columns)}\n"
+                    )
+            prompt_parts.append("\n")
+    except Exception:
+        pass
+
+    # Include COA summary for P&L awareness
+    try:
+        from finch_epm.engine.coa import ChartOfAccounts
+        coa = ChartOfAccounts.load()
+        if coa.accounts:
+            counts = coa.count_by_category()
+            prompt_parts.append("# Chart of Accounts\n\n")
+            prompt_parts.append(
+                f"The user has a {len(coa.level_names)}-level P&L hierarchy "
+                f"with {len(coa.accounts)} accounts:\n"
+            )
+            for cat, count in sorted(counts.items()):
+                prompt_parts.append(f"- {cat}: {count} accounts\n")
+            prompt_parts.append(
+                "\nWhen building P&L dashboards, group by account type "
+                "(Income, Expense, COGS, etc.) and use the COA hierarchy "
+                "for sub-groupings.\n\n"
+            )
+    except Exception:
+        pass
+
     prompt_parts.append(
         "# Additional Rules\n\n"
         "- All NetSuite data is stored as VARCHAR. Use CAST() for numeric operations.\n"

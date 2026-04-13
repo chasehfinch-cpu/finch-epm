@@ -233,6 +233,21 @@ class LocalCacheEngine(CacheEngine):
         rows: list[list[Any]],
         mode: str = "append",
     ) -> int:
+        """Ingest rows into a cache table.
+
+        Args:
+            table_name: DuckDB table name.
+            column_names: Column names from the source.
+            column_types: Column type strings (mapped to DuckDB types).
+            rows: Row data.
+            mode: ``"replace"`` drops and recreates the table.
+                ``"append"`` adds rows, deduplicating by the first column
+                (assumed to be a primary key or unique ID) if the table
+                already has data.
+
+        Returns:
+            Number of rows ingested.
+        """
         if not rows:
             return 0
 
@@ -241,20 +256,58 @@ class LocalCacheEngine(CacheEngine):
         if mode == "replace" and self.has_table(table_name):
             self._conn.execute(f"DROP TABLE IF EXISTS {table_name}")
 
-        if not self.has_table(table_name):
+        if self.has_table(table_name):
+            # Schema evolution: if the source has new columns, recreate
+            existing_cols = self._get_column_names(table_name)
+            new_cols = [c for c in column_names if c not in existing_cols]
+            if new_cols:
+                # Add new columns to the existing table
+                for col_name, col_type in zip(column_names, duck_types):
+                    if col_name in new_cols:
+                        self._conn.execute(
+                            f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
+                        )
+        else:
             col_defs = ", ".join(
                 f"{name} {dtype}" for name, dtype in zip(column_names, duck_types)
             )
             self._conn.execute(f"CREATE TABLE {table_name} ({col_defs})")
 
+        if mode == "append" and self.has_table(table_name):
+            # Deduplication: delete existing rows that match incoming rows
+            # by the first column (typically a primary key like 'id' or a
+            # composite key). This prevents modified rows from appearing
+            # twice after incremental sync.
+            pk_col = column_names[0]
+            pk_idx = 0
+            incoming_pks = {str(row[pk_idx]) for row in rows if row[pk_idx] is not None}
+            if incoming_pks:
+                # Batch delete in chunks to avoid overly long IN clauses
+                pk_list = list(incoming_pks)
+                chunk_size = 500
+                for i in range(0, len(pk_list), chunk_size):
+                    chunk = pk_list[i : i + chunk_size]
+                    placeholders_del = ", ".join(["?"] * len(chunk))
+                    self._conn.execute(
+                        f"DELETE FROM {table_name} WHERE CAST({pk_col} AS VARCHAR) IN ({placeholders_del})",
+                        chunk,
+                    )
+
         placeholders = ", ".join(["?"] * len(column_names))
         col_list = ", ".join(column_names)
         insert_sql = f"INSERT INTO {table_name} ({col_list}) VALUES ({placeholders})"
 
-        # Batch insert for performance (executemany is much faster than row-by-row)
         self._conn.executemany(insert_sql, rows)
 
         return len(rows)
+
+    def _get_column_names(self, table_name: str) -> set[str]:
+        """Return the set of column names for an existing table."""
+        rows = self._conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+            [table_name],
+        ).fetchall()
+        return {row[0] for row in rows}
 
     def has_table(self, table_name: str) -> bool:
         result = self._conn.execute(

@@ -93,6 +93,86 @@ class PLEngine:
                 overrides[acct_id] = acct_cls.pl_section
         return overrides
 
+    def coa_pl(
+        self,
+        year: int | None = None,
+        subsidiary: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Generate a P&L using the user's chart of accounts.
+
+        If a COA is configured (``coa.yaml``), uses its hierarchy to
+        structure the report. Falls back to the hardcoded account type
+        grouping if no COA is available.
+
+        Returns:
+            List of row dicts with keys: label, depth, amount, row_class.
+            Suitable for rendering in a .fdash table with ``_row_class``
+            and ``_depth`` metadata columns.
+        """
+        from finch_epm.engine.coa import ChartOfAccounts
+
+        coa = ChartOfAccounts.load()
+
+        # Build GL aggregation: sum amounts by account ID
+        where_parts = ["t.posting = 'T'"]
+        if year:
+            where_parts.append(
+                f"SPLIT_PART(tx.trandate, '/', 3) = '{year}'"
+            )
+        if subsidiary:
+            where_parts.append(
+                f"tl.subsidiary IN (SELECT CAST(id AS VARCHAR) FROM Subsidiary WHERE name = '{subsidiary}')"
+            )
+        where_clause = " AND ".join(where_parts)
+
+        sql = f"""
+            SELECT
+                CAST(t.account AS VARCHAR) AS account_id,
+                SUM(CAST(t.amount AS DOUBLE)) AS amount
+            FROM TransactionAccountingLine t
+            JOIN Transaction tx
+                ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+            LEFT JOIN TransactionLine tl
+                ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
+                AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
+            WHERE {where_clause}
+            GROUP BY CAST(t.account AS VARCHAR)
+        """
+
+        result = self._cache.execute_query(QueryRequest(sql=sql))
+        gl_data: dict[str, float] = {}
+        for row in result.rows:
+            acct_id = str(row[0])
+            amount = float(row[1]) if row[1] else 0.0
+            gl_data[acct_id] = amount
+
+        if not coa.accounts:
+            # No COA configured — fall back to auto-generated from cached accounts
+            try:
+                acct_result = self._cache.execute_query(
+                    QueryRequest(sql="SELECT * FROM Account")
+                )
+                acct_rows = [
+                    dict(zip(acct_result.column_names, row))
+                    for row in acct_result.rows
+                ]
+                coa = ChartOfAccounts.from_accounts(acct_rows)
+            except Exception:
+                return [{"label": "No COA configured", "depth": 0, "amount": 0, "row_class": ""}]
+
+        pl_rows = coa.build_pl_tree(gl_data)
+        return [
+            {
+                "label": r.label,
+                "depth": r.depth,
+                "amount": r.amount,
+                "row_class": r.row_class,
+                "_row_class": r.row_class,
+                "_depth": r.depth,
+            }
+            for r in pl_rows
+        ]
+
     def monthly_pl(
         self,
         year: int,
