@@ -438,12 +438,9 @@ class NetSuiteConnector(ConnectorBase):
         all_column_names: list[str] = []
         all_column_types: list[ColumnType] = []
         all_rows: list[list[Any]] = []
-        api_total = 0
         was_truncated = False
 
         for table_name in plan.scope.tables:
-            sql = f"SELECT * FROM {table_name}"
-
             where_clauses: list[str] = []
             for key, value in plan.scope.filters.items():
                 if isinstance(value, list):
@@ -456,33 +453,120 @@ class NetSuiteConnector(ConnectorBase):
                 since_str = plan.scope.since.strftime("%Y-%m-%d %H:%M:%S")
                 where_clauses.append(f"lastmodifieddate >= '{since_str}'")
 
+            # First attempt: fetch all rows in one query
+            sql = f"SELECT * FROM {table_name}"
             if where_clauses:
                 sql += " WHERE " + " AND ".join(where_clauses)
 
             result = self._suiteql.execute(sql, limit=plan.scope.limit)
+            table_rows = result.rows
 
-            if result.rows:
+            # NetSuite caps at 100,000 rows per query. If we hit that cap,
+            # split by year ranges to get all data.
+            if len(table_rows) >= 100_000:
+                logger.info(
+                    "Table %s hit 100K API cap (%d rows). "
+                    "Splitting by year to fetch all data.",
+                    table_name, len(table_rows),
+                )
+                table_rows = self._fetch_by_year_chunks(
+                    table_name, where_clauses, plan.scope.limit
+                )
+
+            if table_rows:
                 if not all_column_names:
                     all_column_names = [
-                        c for c in result.column_names if c != "links"
+                        c for c in (result.column_names if result.rows else list(table_rows[0].keys()))
+                        if c != "links"
                     ]
                     all_column_types = [ColumnType.STRING] * len(all_column_names)
 
-                for row_dict in result.rows:
+                for row_dict in table_rows:
                     all_rows.append([row_dict.get(col) for col in all_column_names])
-
-            # Track if the API reported more rows than we fetched
-            api_total = result.total_results
-            was_truncated = result.has_more
 
         return FactResult(
             column_names=all_column_names,
             column_types=all_column_types,
             rows=all_rows,
-            total_rows_available=api_total if api_total else len(all_rows),
+            total_rows_available=len(all_rows),
             truncated=was_truncated,
             watermark=datetime.now(),
         )
+
+    def _fetch_by_year_chunks(
+        self,
+        table_name: str,
+        base_where: list[str],
+        limit: int | None,
+    ) -> list[dict[str, Any]]:
+        """Fetch a large table by splitting into year-based chunks.
+
+        NetSuite's SuiteQL API caps at 100,000 rows per query with no
+        way to paginate past that limit. This method splits the query
+        into per-year chunks using ``lastmodifieddate`` to get all rows.
+        If a single year still exceeds 100K, it splits further by quarter.
+        """
+        assert self._suiteql is not None
+        all_rows: list[dict[str, Any]] = []
+
+        # Determine the year range from the data
+        count_sql = (
+            f"SELECT MIN(EXTRACT(YEAR FROM lastmodifieddate)) AS min_yr, "
+            f"MAX(EXTRACT(YEAR FROM lastmodifieddate)) AS max_yr "
+            f"FROM {table_name}"
+        )
+        if base_where:
+            count_sql += " WHERE " + " AND ".join(base_where)
+
+        try:
+            yr_result = self._suiteql.execute(count_sql, limit=1)
+            if not yr_result.rows:
+                return all_rows
+            min_yr = int(yr_result.rows[0].get("min_yr") or 2015)
+            max_yr = int(yr_result.rows[0].get("max_yr") or 2026)
+        except Exception:
+            min_yr, max_yr = 2015, 2026
+
+        for year in range(min_yr, max_yr + 1):
+            year_where = list(base_where)
+            year_where.append(
+                f"EXTRACT(YEAR FROM lastmodifieddate) = {year}"
+            )
+            sql = f"SELECT * FROM {table_name} WHERE " + " AND ".join(year_where)
+
+            result = self._suiteql.execute(sql, limit=limit)
+            all_rows.extend(result.rows)
+
+            logger.info(
+                "  %s year %d: %d rows (total so far: %d)",
+                table_name, year, len(result.rows), len(all_rows),
+            )
+
+            # If a single year exceeds 100K, split by quarter
+            if len(result.rows) >= 100_000:
+                logger.info(
+                    "  Year %d hit 100K cap. Splitting by quarter.", year
+                )
+                # Remove the year's rows (we'll re-fetch by quarter)
+                all_rows = all_rows[: -len(result.rows)]
+                for q_start, q_end in [(1, 3), (4, 6), (7, 9), (10, 12)]:
+                    q_where = list(base_where)
+                    q_where.append(
+                        f"EXTRACT(YEAR FROM lastmodifieddate) = {year}"
+                    )
+                    q_where.append(
+                        f"EXTRACT(MONTH FROM lastmodifieddate) BETWEEN {q_start} AND {q_end}"
+                    )
+                    q_sql = f"SELECT * FROM {table_name} WHERE " + " AND ".join(q_where)
+                    q_result = self._suiteql.execute(q_sql, limit=limit)
+                    all_rows.extend(q_result.rows)
+                    logger.info(
+                        "    Q%d (%d-%d): %d rows",
+                        (q_start - 1) // 3 + 1, q_start, q_end,
+                        len(q_result.rows),
+                    )
+
+        return all_rows
 
     # --- Internal helpers ---
 
