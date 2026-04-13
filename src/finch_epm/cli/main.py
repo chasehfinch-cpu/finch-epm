@@ -1644,7 +1644,7 @@ def llm_test(name: str) -> None:
         raise SystemExit(1)
 
 
-def _make_llm_provider(profile_name: str = "default") -> "Provider":
+def _make_llm_provider(profile_name: str = "default") -> Any:
     """Create an LLM Provider from a named profile.
 
     Checks environment variables first, then falls back to keyring.

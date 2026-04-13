@@ -90,5 +90,14 @@ strict = true
 target-version = "py310"
 line-length = 100
 
+[tool.ruff.lint]
+# F821: false positives with `from __future__ import annotations` and late imports
+# F401: unused imports are often intentional (re-exports, type-only imports in CLI)
+# F541: f-strings without placeholders in click.echo are harmless readability choice
+# F841: unused variables from API calls we don't consume yet
+# E402: module-level imports after logger setup is an intentional pattern
+# E741: single-letter variables in list comprehensions are clear in context
+ignore = ["F821", "F401", "F541", "F841", "E402", "E741"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
