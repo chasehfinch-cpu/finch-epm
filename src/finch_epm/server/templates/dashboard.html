@@ -39,6 +39,30 @@ body{font-family:var(--fdash-font-family,'Segoe UI',Tahoma,Geneva,Verdana,sans-s
 .sync-banner{background:#eff6ff;border:1px solid #bfdbfe;padding:10px 20px;font-size:13px;color:#1e40af;display:flex;align-items:center;gap:10px}
 .sync-banner:empty{display:none}
 .sync-spinner{width:14px;height:14px;border:2px solid #bfdbfe;border-top-color:#2563eb;border-radius:50%;animation:spin 0.8s linear infinite}
+
+/* Toggle filter buttons */
+.toggle-group{display:flex;background:#f1f5f9;border-radius:8px;padding:3px;gap:2px}
+.toggle-btn{padding:6px 16px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:500;color:#64748b;background:transparent;transition:all 0.18s;white-space:nowrap}
+.toggle-btn.active{background:#fff;color:var(--fdash-table-header-bg,#1e3a8a);box-shadow:0 1px 4px rgba(0,0,0,0.12);font-weight:600}
+.toggle-btn:hover:not(.active){color:#334155;background:rgba(255,255,255,0.5)}
+
+/* Drill-down panel */
+.drill-panel{position:fixed;right:20px;top:80px;width:520px;max-height:calc(100vh - 120px);background:var(--fdash-bg-card,#fff);border:1px solid var(--fdash-border,#e4e7ec);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.15);z-index:100;display:none;flex-direction:column;overflow:hidden}
+.drill-panel.open{display:flex}
+.drill-panel-header{background:var(--fdash-header-bg,linear-gradient(135deg,#1e3a8a,#2563eb));color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;cursor:move}
+.drill-panel-header h3{font-size:14px;font-weight:600;margin:0}
+.drill-panel-close{background:none;border:none;color:#fff;font-size:18px;cursor:pointer;padding:0 4px;opacity:0.8}
+.drill-panel-close:hover{opacity:1}
+.drill-panel-body{overflow:auto;flex:1;padding:0}
+.drill-panel-body table.dt{font-size:9pt}
+.drill-panel-body table.dt th{font-size:8pt;padding:8px 6px}
+.drill-panel-body table.dt td{padding:4px 6px}
+
+/* Dashboard table (P&L matrix) overrides */
+.dashboard-table td.col-account{text-align:left;position:sticky;left:0;z-index:5;background:var(--fdash-bg-card,#fff);font-weight:500;min-width:280px}
+.dashboard-table th.col-account{text-align:left;position:sticky;left:0;z-index:11;min-width:280px}
+.dashboard-table th.col-month{min-width:100px;text-align:center}
+.dashboard-table td.col-number{text-align:center}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── Filter toolbar ──────────────────────────────────────── */
@@ -319,32 +343,76 @@ tr.hidden{display:none}
       label.className = "ft-label";
       label.textContent = f.label;
       group.appendChild(label);
-      var select = document.createElement("select");
-      select.className = "ft-select";
-      select.id = "filter-" + f.name;
-      var allOpt = document.createElement("option");
-      allOpt.value = "";
-      allOpt.textContent = "All";
-      select.appendChild(allOpt);
-      fetch("/api/filter/" + encodeURIComponent(f.name))
-        .then(function(r){return r.json();})
-        .then(function(data) {
-          if (data.options) {
-            data.options.forEach(function(opt) {
-              var o = document.createElement("option");
-              o.value = opt.value; o.textContent = opt.label;
-              if (f.default !== null && String(opt.value) === String(f.default)) o.selected = true;
-              select.appendChild(o);
-            });
-          }
-          if (f.default) activeFilters[f.parameter] = f.default;
+
+      // Toggle button filters
+      if (f.type === "toggle") {
+        var toggleGroup = document.createElement("div");
+        toggleGroup.className = "toggle-group";
+        // "All" button
+        var allBtn = document.createElement("button");
+        allBtn.className = "toggle-btn active";
+        allBtn.textContent = "All";
+        allBtn.addEventListener("click", function() {
+          toggleGroup.querySelectorAll(".toggle-btn").forEach(function(b){b.classList.remove("active");});
+          allBtn.classList.add("active");
+          delete activeFilters[f.parameter];
+          loadAll(dashSpec);
         });
-      select.addEventListener("change", function() {
-        if (select.value) activeFilters[f.parameter] = select.value;
-        else delete activeFilters[f.parameter];
-        loadAll(dashSpec);
-      });
-      group.appendChild(select);
+        toggleGroup.appendChild(allBtn);
+        // Load options
+        fetch("/api/filter/" + encodeURIComponent(f.name))
+          .then(function(r){return r.json();})
+          .then(function(data) {
+            if (data.options) {
+              data.options.forEach(function(opt) {
+                var btn = document.createElement("button");
+                btn.className = "toggle-btn";
+                btn.textContent = opt.label;
+                if (f.default && String(opt.value) === String(f.default)) {
+                  btn.classList.add("active");
+                  allBtn.classList.remove("active");
+                  activeFilters[f.parameter] = opt.value;
+                }
+                btn.addEventListener("click", function() {
+                  toggleGroup.querySelectorAll(".toggle-btn").forEach(function(b){b.classList.remove("active");});
+                  btn.classList.add("active");
+                  activeFilters[f.parameter] = opt.value;
+                  loadAll(dashSpec);
+                });
+                toggleGroup.appendChild(btn);
+              });
+            }
+          });
+        group.appendChild(toggleGroup);
+      } else {
+        // Standard dropdown filter
+        var select = document.createElement("select");
+        select.className = "ft-select";
+        select.id = "filter-" + f.name;
+        var allOpt = document.createElement("option");
+        allOpt.value = "";
+        allOpt.textContent = "All";
+        select.appendChild(allOpt);
+        fetch("/api/filter/" + encodeURIComponent(f.name))
+          .then(function(r){return r.json();})
+          .then(function(data) {
+            if (data.options) {
+              data.options.forEach(function(opt) {
+                var o = document.createElement("option");
+                o.value = opt.value; o.textContent = opt.label;
+                if (f.default !== null && String(opt.value) === String(f.default)) o.selected = true;
+                select.appendChild(o);
+              });
+            }
+            if (f.default) activeFilters[f.parameter] = f.default;
+          });
+        select.addEventListener("change", function() {
+          if (select.value) activeFilters[f.parameter] = select.value;
+          else delete activeFilters[f.parameter];
+          loadAll(dashSpec);
+        });
+        group.appendChild(select);
+      }
       bar.appendChild(group);
     });
   }
@@ -382,7 +450,7 @@ tr.hidden{display:none}
     chartsToRender.forEach(function(ch, idx) {
       var isKpi = ch.type === "kpi";
       var isMarkdown = ch.type === "markdown";
-      var isTable = ch.type === "table" || ch.type === "pivot" || ch.type === "variance_table" || ch.type === "custom";
+      var isTable = ch.type === "table" || ch.type === "pivot" || ch.type === "variance_table" || ch.type === "custom" || ch.type === "pl_matrix";
       var isEC = !isKpi && !isTable && !isMarkdown;
       var w = ch.width || (isKpi ? "kpi" : "half");
       var card = document.createElement("div");
@@ -672,46 +740,214 @@ tr.hidden{display:none}
     if (ch.height) wrap.style.maxHeight = ch.height + "px";
     if (!data.rows.length){wrap.innerHTML='<div class="error">No data</div>';card.appendChild(wrap);return;}
     var colFmt = ch.columns || {};
+    var hasHierarchy = data.column_names.indexOf("_row_class") >= 0;
+    var depthCol = data.column_names.indexOf("_depth");
+    var rowClassCol = data.column_names.indexOf("_row_class");
+
+    // Toolbar for hierarchical tables
+    if (hasHierarchy) {
+      var toolbar = document.createElement("div");
+      toolbar.style.cssText = "padding:6px 12px;display:flex;gap:6px;border-bottom:1px solid #e5e7eb";
+      var expandBtn = document.createElement("button");
+      expandBtn.className = "ft-btn ft-btn-secondary";
+      expandBtn.textContent = "Expand All";
+      expandBtn.style.cssText = "font-size:11px;padding:4px 12px;height:28px";
+      var collapseBtn = document.createElement("button");
+      collapseBtn.className = "ft-btn ft-btn-secondary";
+      collapseBtn.textContent = "Collapse All";
+      collapseBtn.style.cssText = "font-size:11px;padding:4px 12px;height:28px";
+      toolbar.appendChild(expandBtn);
+      toolbar.appendChild(collapseBtn);
+      card.appendChild(toolbar);
+    }
+
     var t = document.createElement("table");
     t.className = "dt";
     var thead = document.createElement("thead");
     var hr = document.createElement("tr");
+    // Build visible column headers (skip _ metadata columns)
+    var visibleCols = [];
     data.column_names.forEach(function(c, ci){
+      if (c.startsWith("_")) return;
+      visibleCols.push({name: c, idx: ci});
       var th = document.createElement("th");
       th.textContent = c;
-      if (ci === 0) th.className = "col-left";
+      if (visibleCols.length === 1) th.className = "col-left";
       hr.appendChild(th);
     });
     thead.appendChild(hr);
     t.appendChild(thead);
+
     var tbody = document.createElement("tbody");
-    data.rows.forEach(function(row) {
+    var allRows = [];
+    data.rows.forEach(function(row, rowIdx) {
       var tr = document.createElement("tr");
-      // Row-level class from data (hierarchy support)
-      var rowClass = "";
-      var levelCol = data.column_names.indexOf("_row_class");
-      if (levelCol >= 0 && row[levelCol]) rowClass = row[levelCol];
-      var depthCol = data.column_names.indexOf("_depth");
+      var rowClass = rowClassCol >= 0 && row[rowClassCol] ? row[rowClassCol] : "";
+      var depth = depthCol >= 0 ? (Number(row[depthCol]) || 0) : 0;
+      var isSection = rowClass && rowClass !== "row-account" && rowClass !== "row-stat";
       if (rowClass) tr.className = rowClass;
-      row.forEach(function(cell, ci) {
-        var cname = data.column_names[ci];
-        if (cname.startsWith("_")) return; // Skip metadata columns
+      tr.setAttribute("data-depth", depth);
+      tr.setAttribute("data-row-idx", rowIdx);
+
+      visibleCols.forEach(function(vc, vcIdx) {
+        var cell = row[vc.idx];
         var td = document.createElement("td");
-        var cf = colFmt[cname];
-        if (ci === 0) {
+        var cf = colFmt[vc.name];
+        if (vcIdx === 0) {
           td.className = "col-left";
-          if (depthCol >= 0) {
-            var depth = Number(row[depthCol]) || 0;
-            td.classList.add("indent-" + Math.min(depth, 7));
+          td.classList.add("indent-" + Math.min(depth, 7));
+          // Add expand/collapse icon for section rows
+          if (hasHierarchy && isSection) {
+            var icon = document.createElement("span");
+            icon.className = "expand-icon";
+            icon.textContent = "▼";
+            icon.style.cursor = "pointer";
+            td.insertBefore(icon, td.firstChild);
+            tr.classList.add("expandable");
           }
         }
         if (cell !== null && cell !== undefined) {
           var num = Number(cell);
           if (!isNaN(num) && String(cell).match(/^-?\d/)) {
             td.className += " col-number";
-            td.textContent = cf ? fmtNum(num, cf.format || cf, cf.prefix, cf.suffix) : num.toLocaleString(undefined,{maximumFractionDigits:2});
+            // Variance coloring for negative amounts on section rows
+            if (isSection && num < 0) td.classList.add("col-variance-unfav");
+            td.textContent = cf ? fmtNum(num, cf.format || cf, cf.prefix, cf.suffix) : fmtCurrency(num, "$");
           } else {
-            td.textContent = String(cell);
+            if (vcIdx === 0 && hasHierarchy && isSection) {
+              td.appendChild(document.createTextNode(String(cell)));
+            } else {
+              td.textContent = String(cell);
+            }
+          }
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+      allRows.push({tr: tr, depth: depth, isSection: isSection, rowIdx: rowIdx});
+    });
+    t.appendChild(tbody);
+    wrap.appendChild(t);
+    card.appendChild(wrap);
+
+    // Expand/collapse logic
+    if (hasHierarchy) {
+      allRows.forEach(function(r) {
+        if (r.isSection) {
+          r.tr.addEventListener("click", function() {
+            var expanded = r.tr.getAttribute("data-expanded") !== "false";
+            r.tr.setAttribute("data-expanded", expanded ? "false" : "true");
+            var icon = r.tr.querySelector(".expand-icon");
+            if (icon) icon.textContent = expanded ? "▶" : "▼";
+            // Toggle children: hide/show all rows between this section and
+            // the next row at the same or lesser depth
+            var hiding = expanded;
+            for (var i = r.rowIdx + 1; i < allRows.length; i++) {
+              if (allRows[i].depth <= r.depth) break;
+              allRows[i].tr.classList.toggle("hidden", hiding);
+            }
+          });
+        }
+      });
+      expandBtn.addEventListener("click", function() {
+        allRows.forEach(function(r) {
+          r.tr.classList.remove("hidden");
+          r.tr.setAttribute("data-expanded", "true");
+          var icon = r.tr.querySelector(".expand-icon");
+          if (icon) icon.textContent = "▼";
+        });
+      });
+      collapseBtn.addEventListener("click", function() {
+        allRows.forEach(function(r) {
+          if (r.depth > 0) r.tr.classList.add("hidden");
+          if (r.isSection) {
+            r.tr.setAttribute("data-expanded", "false");
+            var icon = r.tr.querySelector(".expand-icon");
+            if (icon) icon.textContent = "▶";
+          }
+        });
+      });
+    }
+
+    // Drill-down: if chart has detail_query, clicking an account row
+    // opens a detail panel with transaction-level data
+    if (ch.detail_query) {
+      allRows.forEach(function(r) {
+        if (!r.isSection) {
+          r.tr.style.cursor = "pointer";
+          r.tr.addEventListener("click", function() {
+            var acctName = data.rows[r.rowIdx][visibleCols[0].idx];
+            var detailUrl = buildQueryUrl(ch.detail_query) + "&account=" + encodeURIComponent(acctName);
+            fetch(detailUrl)
+              .then(function(resp){return resp.json();})
+              .then(function(detail){
+                openDrillDown("Detail: " + acctName, detail);
+              });
+          });
+        }
+      });
+    }
+  };
+
+  // P&L Matrix: Account × Month grid with frozen first column
+  domRenderers.pl_matrix = function(card, ch, data) {
+    var wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    wrap.style.maxHeight = ch.height ? ch.height + "px" : "70vh";
+    if (!data.rows.length){wrap.innerHTML='<div class="error">No data</div>';card.appendChild(wrap);return;}
+    var colFmt = ch.columns || {};
+    var rowClassCol = data.column_names.indexOf("_row_class");
+    var depthCol = data.column_names.indexOf("_depth");
+    // Detect month columns (anything that's not the first col or metadata)
+    var accountCol = 0;
+    var monthCols = [];
+    data.column_names.forEach(function(c, ci) {
+      if (c.startsWith("_")) return;
+      if (ci === accountCol) return;
+      monthCols.push({name: c, idx: ci});
+    });
+
+    var t = document.createElement("table");
+    t.className = "dt dashboard-table";
+    var thead = document.createElement("thead");
+    var hr = document.createElement("tr");
+    var thAcct = document.createElement("th");
+    thAcct.className = "col-account col-left";
+    thAcct.textContent = data.column_names[accountCol];
+    hr.appendChild(thAcct);
+    monthCols.forEach(function(mc, mi) {
+      var th = document.createElement("th");
+      th.className = mi === monthCols.length - 1 ? "col-total" : "col-month";
+      th.textContent = mc.name;
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    t.appendChild(thead);
+
+    var tbody = document.createElement("tbody");
+    data.rows.forEach(function(row) {
+      var tr = document.createElement("tr");
+      var rowClass = rowClassCol >= 0 && row[rowClassCol] ? row[rowClassCol] : "row-account";
+      var depth = depthCol >= 0 ? (Number(row[depthCol]) || 0) : 0;
+      tr.className = rowClass;
+
+      // Account name (frozen)
+      var tdAcct = document.createElement("td");
+      tdAcct.className = "col-account col-left indent-" + Math.min(depth, 7);
+      tdAcct.textContent = String(row[accountCol] || "");
+      tr.appendChild(tdAcct);
+
+      // Month values
+      monthCols.forEach(function(mc, mi) {
+        var td = document.createElement("td");
+        td.className = mi === monthCols.length - 1 ? "col-total" : "col-number";
+        var val = row[mc.idx];
+        if (val !== null && val !== undefined) {
+          var num = Number(val);
+          if (!isNaN(num)) {
+            td.textContent = fmtCurrency(num, "$");
+          } else {
+            td.textContent = String(val);
           }
         }
         tr.appendChild(td);
@@ -841,6 +1077,101 @@ tr.hidden{display:none}
     if (!spec.height && ch.height) spec.height = ch.height - 40;
     vegaEmbed(container, spec, {actions:false, renderer:"svg"}).catch(function(err) {
       container.innerHTML = '<div class="error">Vega-Lite error: ' + err.message + '</div>';
+    });
+  };
+
+  // === Drill-down panel ===
+  var drillPanel = null;
+  function openDrillDown(title, data) {
+    if (!drillPanel) {
+      drillPanel = document.createElement("div");
+      drillPanel.className = "drill-panel";
+      drillPanel.innerHTML = '<div class="drill-panel-header"><h3 id="drill-title"></h3><button class="drill-panel-close">&times;</button></div><div class="drill-panel-body" id="drill-body"></div>';
+      document.body.appendChild(drillPanel);
+      drillPanel.querySelector(".drill-panel-close").addEventListener("click", function(){
+        drillPanel.classList.remove("open");
+      });
+    }
+    drillPanel.querySelector("#drill-title").textContent = title;
+    var body = drillPanel.querySelector("#drill-body");
+    body.innerHTML = "";
+    if (!data || !data.rows || !data.rows.length) {
+      body.innerHTML = '<div class="error" style="margin:16px">No detail data available</div>';
+    } else {
+      var t = document.createElement("table");
+      t.className = "dt";
+      var thead = document.createElement("thead");
+      var hr = document.createElement("tr");
+      data.column_names.forEach(function(c){ var th=document.createElement("th"); th.textContent=c; hr.appendChild(th); });
+      thead.appendChild(hr); t.appendChild(thead);
+      var tbody = document.createElement("tbody");
+      data.rows.slice(0, 200).forEach(function(row){
+        var tr = document.createElement("tr");
+        row.forEach(function(cell, ci){
+          var td = document.createElement("td");
+          if (cell !== null && cell !== undefined) {
+            var num = Number(cell);
+            if (!isNaN(num) && String(cell).match(/^-?\d/)) { td.className="col-number"; td.textContent=fmtCurrency(num,"$"); }
+            else td.textContent = String(cell);
+          }
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      t.appendChild(tbody);
+      body.appendChild(t);
+      if (data.rows.length > 200) {
+        var more = document.createElement("div");
+        more.style.cssText = "padding:8px 12px;font-size:11px;color:#6b7280;text-align:center";
+        more.textContent = "Showing 200 of " + data.rows.length + " rows";
+        body.appendChild(more);
+      }
+    }
+    drillPanel.classList.add("open");
+  }
+
+  // === EBITDA Bridge (waterfall) chart builder ===
+  ecBuilders.bridge = function(ec, ch, data) {
+    var labelCol = col(data, ch.x || ch.label || data.column_names[0]);
+    var valueCol = col(data, ch.y || ch.value || data.column_names[1]);
+    if (labelCol < 0 || valueCol < 0) return;
+
+    var labels = [], values = [], colors = [];
+    var cumulative = 0;
+    data.rows.forEach(function(row, i) {
+      var label = String(row[labelCol]);
+      var val = Number(row[valueCol]) || 0;
+      labels.push(label);
+      values.push(val);
+      colors.push(val >= 0 ? "#2563eb" : "#f97316");
+      cumulative += val;
+    });
+
+    // Build waterfall data: [invisible_base, visible_bar]
+    var base = [], visible = [];
+    var running = 0;
+    values.forEach(function(v, i) {
+      if (v >= 0) { base.push(running); visible.push(v); }
+      else { base.push(running + v); visible.push(Math.abs(v)); }
+      running += v;
+    });
+    // Add total bar
+    labels.push("Total");
+    base.push(0);
+    visible.push(running);
+    colors.push(running >= 0 ? "#059669" : "#dc2626");
+
+    ec.setOption({
+      tooltip: {trigger:"axis", axisPointer:{type:"shadow"}, backgroundColor:"#1f2937", borderColor:"#1f2937", textStyle:{color:"#f9fafb"},
+        formatter: function(p) { var v=p[1]; return v.name + ": " + fmtCurrency(v.value, "$"); }
+      },
+      xAxis: {type:"category", data:labels, axisLabel:{rotate:labels.length>6?35:0, fontSize:11, color:"#6b7280"}},
+      yAxis: {type:"value", axisLabel:{fontSize:11, formatter:fmtAxis, color:"#6b7280"}, splitLine:{lineStyle:{color:"#f3f4f6"}}},
+      series: [
+        {name:"base", type:"bar", stack:"waterfall", itemStyle:{color:"transparent"}, emphasis:{itemStyle:{color:"transparent"}}, data:base},
+        {name:"value", type:"bar", stack:"waterfall", data:visible.map(function(v,i){return{value:v,itemStyle:{color:colors[i]}};})},
+      ],
+      grid:{left:70, right:16, top:16, bottom:labels.length>6?60:36}
     });
   };
 
