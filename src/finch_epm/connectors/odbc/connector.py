@@ -77,6 +77,7 @@ class OdbcConnector(ConnectorBase):
 
     connector_type: ClassVar[str] = "odbc"
     display_name: ClassVar[str] = "ODBC (Generic)"
+    source_prefix: ClassVar[str] = "odbc"
 
     def __init__(
         self,

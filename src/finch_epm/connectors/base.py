@@ -50,6 +50,9 @@ class ConnectorBase(ABC):
     display_name: ClassVar[str]
     """Human-readable name, e.g. ``"NetSuite"``."""
 
+    source_prefix: ClassVar[str]
+    """Short prefix for cache table namespacing, e.g. ``"ns"``."""
+
     def __init__(self, profile_name: str, config: dict[str, Any]) -> None:
         """Initialize connector with a named profile and its configuration.
 
@@ -180,3 +183,38 @@ class ConnectorBase(ABC):
             True if credentials are valid, False otherwise.
         """
         ...
+
+    # --- Federated query (v0.4) ---
+
+    def supports_direct_query(self) -> bool:
+        """Whether this connector can execute arbitrary SQL directly.
+
+        Override and return ``True`` for SQL-capable sources like
+        Snowflake, BigQuery, PostgreSQL, and SQL Server.
+
+        Returns:
+            False by default. Subclasses override to enable federation.
+        """
+        return False
+
+    def execute_direct_query(
+        self, sql: str, parameters: dict[str, Any] | None = None
+    ) -> FactResult:
+        """Execute SQL against the remote source without caching.
+
+        Only called when :meth:`supports_direct_query` returns True.
+
+        Args:
+            sql: The SQL to execute (in the source's native dialect).
+            parameters: Optional query parameters.
+
+        Returns:
+            Tabular result data.
+
+        Raises:
+            NotImplementedError: If the connector does not support
+                direct queries.
+        """
+        raise NotImplementedError(
+            f"{self.display_name} does not support direct queries."
+        )

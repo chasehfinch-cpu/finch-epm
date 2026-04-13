@@ -44,11 +44,24 @@ class ParameterSpec:
 
 @dataclass
 class QuerySpec:
-    """A named SQL query defined in the dashboard."""
+    """A named SQL query defined in the dashboard.
+
+    Supports two modes:
+        - Raw SQL: ``sql`` is set (traditional mode)
+        - Semantic: ``entity`` is set with optional ``measures``,
+          ``group_by``, ``query_filters``, ``order_by`` (v0.4)
+
+    At least one of ``sql`` or ``entity`` must be non-empty.
+    """
 
     name: str
-    sql: str
+    sql: str = ""
     source: str | None = None
+    entity: str | None = None
+    measures: list[str] = field(default_factory=list)
+    group_by: list[str] = field(default_factory=list)
+    query_filters: dict[str, Any] = field(default_factory=dict)
+    order_by: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -114,6 +127,8 @@ class DashboardSpec:
     charts: list[ChartSpec] = field(default_factory=list)
     pages: list[PageSpec] = field(default_factory=list)
     dimensions: DimensionMappingRef | None = None
+    semantic_model: str | None = None
+    federation: dict[str, Any] | None = None
 
     @property
     def is_multi_page(self) -> bool:

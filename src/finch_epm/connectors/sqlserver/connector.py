@@ -82,6 +82,7 @@ class SqlServerConnector(ConnectorBase):
 
     connector_type: ClassVar[str] = "sqlserver"
     display_name: ClassVar[str] = "SQL Server"
+    source_prefix: ClassVar[str] = "ss"
 
     def __init__(
         self,

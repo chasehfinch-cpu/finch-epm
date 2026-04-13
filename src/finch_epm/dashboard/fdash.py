@@ -136,20 +136,34 @@ def _parse_dashboard(raw: dict[str, Any], source: str) -> DashboardSpec:
     if isinstance(sources, str):
         sources = [sources]
 
-    # Parse queries
+    # Parse queries (supports both raw SQL and semantic entity mode)
     queries: list[QuerySpec] = []
     for q in raw.get("queries", []):
         if not isinstance(q, dict):
             raise FdashError(f"Each query must be a mapping in {source}")
         if "name" not in q:
             raise FdashError(f"Each query must have a 'name' in {source}")
-        if "sql" not in q:
-            raise FdashError(f"Query '{q['name']}' must have a 'sql' field in {source}")
-        queries.append(QuerySpec(
-            name=q["name"],
-            sql=q["sql"],
-            source=q.get("source"),
-        ))
+        if "entity" in q:
+            # Semantic query mode
+            queries.append(QuerySpec(
+                name=q["name"],
+                entity=q["entity"],
+                measures=q.get("measures", []),
+                group_by=q.get("group_by", []),
+                query_filters=q.get("filters", {}),
+                order_by=q.get("order_by", []),
+                source=q.get("source"),
+            ))
+        elif "sql" in q:
+            queries.append(QuerySpec(
+                name=q["name"],
+                sql=q["sql"],
+                source=q.get("source"),
+            ))
+        else:
+            raise FdashError(
+                f"Query '{q['name']}' must have either 'sql' or 'entity' in {source}"
+            )
 
     # Parse parameters
     parameters: dict[str, ParameterSpec] = {}
@@ -218,6 +232,12 @@ def _parse_dashboard(raw: dict[str, Any], source: str) -> DashboardSpec:
     elif isinstance(dim_raw, str):
         dimensions = DimensionMappingRef(file=dim_raw)
 
+    # Parse semantic model path
+    semantic_model = raw.get("semantic_model")
+
+    # Parse federation config
+    federation = raw.get("federation")
+
     return DashboardSpec(
         name=name,
         description=description,
@@ -228,4 +248,6 @@ def _parse_dashboard(raw: dict[str, Any], source: str) -> DashboardSpec:
         charts=charts,
         pages=pages,
         dimensions=dimensions,
+        semantic_model=semantic_model,
+        federation=federation,
     )

@@ -48,6 +48,9 @@ def _make_connector(connector_type: str, profile_name: str) -> ConnectorBase:
 @click.version_option(version=__version__, prog_name="finch-epm")
 def cli() -> None:
     """finch-epm: Local-first portable analytics for EPM and database systems."""
+    from finch_epm.connectors.registry import discover_plugins
+
+    discover_plugins()
 
 
 # ---------------------------------------------------------------------------

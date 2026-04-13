@@ -24,8 +24,26 @@ def _sanitize_cache_table_name(name: str) -> str:
 
     SQL Server tables like 'dbo.RCMSiteMaster' contain dots which DuckDB
     interprets as schema qualifiers. Replace dots with double underscores.
+
+    .. deprecated:: 0.4.0
+        Use :func:`_make_cache_table_name` for namespaced tables.
     """
     return name.replace(".", "__")
+
+
+def _make_cache_table_name(source_prefix: str, table_name: str) -> str:
+    """Build a namespaced cache table name.
+
+    Combines the connector's source prefix with the sanitized table name
+    to prevent collisions between different data sources.
+
+    Example::
+
+        _make_cache_table_name("ns", "Account") -> "ns__Account"
+        _make_cache_table_name("ss", "dbo.Sites") -> "ss__dbo__Sites"
+    """
+    sanitized = table_name.replace(".", "__")
+    return f"{source_prefix}__{sanitized}"
 
 
 class SyncEngine:
@@ -143,7 +161,9 @@ class SyncEngine:
     def _sync_one_table(self, table_name: str, mode: str) -> TableSyncResult:
         """Sync a single table from the connector into the cache."""
         start = time.monotonic()
-        cache_table = _sanitize_cache_table_name(table_name)
+        cache_table = _make_cache_table_name(
+            self._connector.source_prefix, table_name
+        )
 
         try:
             # Check for existing watermark (incremental mode)
@@ -243,3 +263,44 @@ class SyncEngine:
                 success=False,
                 error=str(e)[:500],
             )
+
+
+def migrate_to_namespaced_tables(
+    cache: LocalCacheEngine,
+    connector: ConnectorBase,
+) -> list[tuple[str, str]]:
+    """Rename old un-prefixed cache tables to namespaced format.
+
+    Finds tables that match watermark entries for the given connector
+    but lack the source prefix, and renames them.
+
+    Args:
+        cache: The cache engine with existing tables.
+        connector: The connector whose tables should be migrated.
+
+    Returns:
+        List of ``(old_name, new_name)`` pairs that were renamed.
+    """
+    prefix = connector.source_prefix
+    renamed: list[tuple[str, str]] = []
+
+    watermarks = cache.list_watermarks(
+        connector.connector_type, connector.profile_name
+    )
+
+    for wm in watermarks:
+        old_name = _sanitize_cache_table_name(wm.table_name)
+        new_name = _make_cache_table_name(prefix, wm.table_name)
+
+        if old_name == new_name:
+            continue
+        if not cache.has_table(old_name):
+            continue
+        if cache.has_table(new_name):
+            continue
+
+        cache.rename_table(old_name, new_name)
+        renamed.append((old_name, new_name))
+        logger.info("Renamed cache table %s -> %s", old_name, new_name)
+
+    return renamed

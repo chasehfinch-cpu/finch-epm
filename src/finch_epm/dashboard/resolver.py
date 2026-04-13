@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from finch_epm.cache.base import CacheEngine
-from finch_epm.cache.models import QueryRequest, QueryResult
+from finch_epm.cache.models import QueryRequest, QueryResult, StalenessInfo, StalenessLevel
 from finch_epm.dashboard.models import DashboardSpec, ParameterSpec
 
 
@@ -47,6 +47,7 @@ def resolve_queries(
     spec: DashboardSpec,
     cache: CacheEngine,
     parameter_overrides: dict[str, Any] | None = None,
+    federation_router: Any | None = None,
 ) -> dict[str, QueryResult]:
     """Execute all queries in a dashboard spec against the cache.
 
@@ -57,6 +58,9 @@ def resolve_queries(
         spec: The dashboard spec.
         cache: The cache engine to query.
         parameter_overrides: Optional parameter value overrides.
+        federation_router: Optional :class:`FederatedQueryRouter` for
+            hybrid local/remote execution. When provided, each query
+            is routed through the router's decision logic.
 
     Returns:
         Dict mapping query name to QueryResult.
@@ -64,13 +68,59 @@ def resolve_queries(
     params = resolve_parameters(spec, parameter_overrides)
     results: dict[str, QueryResult] = {}
 
+    # Load semantic model if referenced
+    semantic_model = None
+    if spec.semantic_model:
+        from finch_epm.engine.semantic import load_semantic_model
+
+        semantic_model = load_semantic_model(spec.semantic_model)
+
     for query in spec.queries:
-        sql = _substitute_parameters(query.sql, params)
-        request = QueryRequest(
-            sql=sql,
-            source_name=query.source or (spec.sources[0] if spec.sources else None),
-        )
-        results[query.name] = cache.execute_query(request)
+        # Build SQL from semantic model or use raw SQL
+        if query.entity and semantic_model:
+            from finch_epm.engine.query_builder import SemanticQueryBuilder
+
+            builder = SemanticQueryBuilder(semantic_model)
+            sql = builder.build_query(
+                entities=[query.entity],
+                measures=query.measures,
+                group_by=query.group_by,
+                filters=query.query_filters,
+                order_by=query.order_by,
+            )
+            sql = _substitute_parameters(sql, params)
+        else:
+            sql = _substitute_parameters(query.sql, params)
+
+        # Pre-execution validation: check referenced tables exist
+        tables = _extract_table_names(sql)
+        if tables and hasattr(cache, "validate_tables_exist"):
+            found, missing = cache.validate_tables_exist(tables)  # type: ignore[attr-defined]
+            if missing:
+                results[query.name] = QueryResult(
+                    column_names=[],
+                    column_types=[],
+                    rows=[],
+                    row_count=0,
+                    staleness=StalenessInfo(
+                        level=StalenessLevel.MISSING,
+                        tables_involved=tables,
+                    ),
+                    execution_time_ms=0.0,
+                    metadata={"missing_tables": missing},
+                )
+                continue
+
+        if federation_router is not None:
+            results[query.name] = federation_router.execute(
+                sql, source_hint=query.source
+            )
+        else:
+            request = QueryRequest(
+                sql=sql,
+                source_name=query.source or (spec.sources[0] if spec.sources else None),
+            )
+            results[query.name] = cache.execute_query(request)
 
     return results
 
@@ -149,3 +199,30 @@ def _month_end(d: date) -> date:
     if d.month == 12:
         return d.replace(day=31)
     return d.replace(month=d.month + 1, day=1) - timedelta(days=1)
+
+
+def _extract_table_names(sql: str) -> list[str]:
+    """Best-effort extraction of table names from FROM and JOIN clauses.
+
+    Handles common SQL patterns including subqueries (skips them),
+    aliases, and quoted identifiers. Not a full SQL parser — covers
+    the patterns used in .fdash queries.
+
+    Returns:
+        De-duplicated list of table names referenced in the SQL.
+    """
+    # Match FROM/JOIN followed by a table name (not a subquery)
+    pattern = r"(?:FROM|JOIN)\s+(?:\"([^\"]+)\"|([A-Za-z_][A-Za-z0-9_]*))"
+    matches = re.findall(pattern, sql, re.IGNORECASE)
+    tables: list[str] = []
+    seen: set[str] = set()
+    for quoted, unquoted in matches:
+        name = quoted or unquoted
+        # Skip SQL keywords that might match (e.g., SELECT after a subquery)
+        if name.upper() in {"SELECT", "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT",
+                            "UNION", "EXCEPT", "INTERSECT", "VALUES", "SET"}:
+            continue
+        if name not in seen:
+            seen.add(name)
+            tables.append(name)
+    return tables

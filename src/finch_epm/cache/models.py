@@ -58,6 +58,42 @@ class StalenessInfo:
 
 
 @dataclass(frozen=True)
+class SourceTableRef:
+    """Reference to a cache table with its source prefix.
+
+    Cache tables are stored as ``{source_prefix}__{sanitized_table_name}``
+    to prevent collisions between different data sources.
+    """
+
+    source_prefix: str
+    raw_table_name: str
+
+    @property
+    def cache_name(self) -> str:
+        """DuckDB table name: ``prefix__name`` with dots replaced."""
+        sanitized = self.raw_table_name.replace(".", "__")
+        return f"{self.source_prefix}__{sanitized}"
+
+    @classmethod
+    def parse(cls, cache_name: str) -> SourceTableRef:
+        """Parse a cache table name back into prefix + raw name.
+
+        Raises:
+            ValueError: If the name has no ``__`` separator.
+        """
+        sep = "__"
+        idx = cache_name.find(sep)
+        if idx < 0:
+            raise ValueError(
+                f"Cannot parse cache table name (no source prefix): {cache_name!r}"
+            )
+        return cls(
+            source_prefix=cache_name[:idx],
+            raw_table_name=cache_name[idx + len(sep):],
+        )
+
+
+@dataclass(frozen=True)
 class SyncWatermark:
     """Per-table watermark tracking for incremental sync."""
 

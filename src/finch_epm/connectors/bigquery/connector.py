@@ -56,6 +56,7 @@ class BigQueryConnector(ConnectorBase):
 
     connector_type: ClassVar[str] = "bigquery"
     display_name: ClassVar[str] = "BigQuery"
+    source_prefix: ClassVar[str] = "bq"
 
     def __init__(self, profile_name: str = "default", config: dict[str, Any] | None = None) -> None:
         super().__init__(profile_name, config or {})

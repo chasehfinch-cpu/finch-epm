@@ -73,6 +73,7 @@ class PostgresConnector(ConnectorBase):
 
     connector_type: ClassVar[str] = "postgres"
     display_name: ClassVar[str] = "PostgreSQL"
+    source_prefix: ClassVar[str] = "pg"
 
     def __init__(
         self,

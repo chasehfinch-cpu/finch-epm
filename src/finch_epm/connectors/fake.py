@@ -40,6 +40,7 @@ class FakeConnector(ConnectorBase):
 
     connector_type: ClassVar[str] = "fake"
     display_name: ClassVar[str] = "Fake (In-Memory)"
+    source_prefix: ClassVar[str] = "fake"
 
     def __init__(
         self,
@@ -132,6 +133,46 @@ class FakeConnector(ConnectorBase):
             total_rows_available=len(all_rows),
             watermark=datetime.now(),
             truncated=truncated,
+        )
+
+    # --- Federated query (v0.4) ---
+
+    def supports_direct_query(self) -> bool:
+        return self.config.get("supports_direct_query", False)
+
+    def execute_direct_query(
+        self, sql: str, parameters: dict[str, Any] | None = None
+    ) -> FactResult:
+        """Execute SQL against an in-memory DuckDB with the fake data loaded."""
+        import duckdb
+
+        conn = duckdb.connect(":memory:")
+        try:
+            # Create tables from the fake data
+            for table_name, table_info in self._tables.items():
+                col_names = [c.name for c in table_info.columns]
+                rows = self._fact_data.get(table_name, [])
+                if not rows:
+                    continue
+                col_defs = ", ".join(f"{c} VARCHAR" for c in col_names)
+                conn.execute(f"CREATE TABLE {table_name} ({col_defs})")
+                placeholders = ", ".join(["?"] * len(col_names))
+                conn.executemany(
+                    f"INSERT INTO {table_name} VALUES ({placeholders})",
+                    [[str(v) for v in row] for row in rows],
+                )
+
+            result = conn.execute(sql)
+            columns = result.description or []
+            column_names = [col[0] for col in columns]
+            rows = [list(row) for row in result.fetchall()]
+        finally:
+            conn.close()
+
+        return FactResult(
+            column_names=column_names,
+            column_types=[ColumnType.STRING] * len(column_names),
+            rows=rows,
         )
 
     # --- Default built-in data ---

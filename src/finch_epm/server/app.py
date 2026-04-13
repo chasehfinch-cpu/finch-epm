@@ -166,7 +166,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         try:
             # Pass URL query params as parameter overrides
-            results = resolve_queries(spec, cache, parameter_overrides=params)
+            results = resolve_queries(
+                spec, cache, parameter_overrides=params,
+                federation_router=getattr(self.server, "federation_router", None),
+            )
             result = results.get(query_name)
             if result is None:
                 self._send_error(500, f"Query execution returned no result: {query_name}")
@@ -258,7 +261,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            results = resolve_queries(spec, cache)
+            results = resolve_queries(
+                spec, cache,
+                federation_router=getattr(self.server, "federation_router", None),
+            )
             result = results.get(query_name)
             if result is None or not result.rows:
                 self._send_error(404, "No data to export")
@@ -314,9 +320,11 @@ class DashboardHTTPServer(HTTPServer):
         address: tuple[str, int],
         dashboard_spec: DashboardSpec,
         cache: CacheEngine,
+        federation_router: Any | None = None,
     ) -> None:
         self.dashboard_spec = dashboard_spec
         self.cache = cache
+        self.federation_router = federation_router
         super().__init__(address, DashboardHandler)
 
 

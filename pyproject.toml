@@ -53,6 +53,10 @@ dev = [
 [project.scripts]
 finch-epm = "finch_epm.cli.main:cli"
 
+[project.entry-points."finch_epm.connectors"]
+# Third-party connector packages register here.
+# Example: oracle = "finch_epm_oracle:OracleConnector"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/finch_epm"]
 

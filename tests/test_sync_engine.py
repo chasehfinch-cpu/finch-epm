@@ -20,7 +20,7 @@ class TestFullSync:
         assert report.total_rows == 10
 
         result = cache_engine.execute_query(
-            QueryRequest(sql="SELECT COUNT(*) AS cnt FROM gl_detail")
+            QueryRequest(sql="SELECT COUNT(*) AS cnt FROM fake__gl_detail")
         )
         assert result.rows[0][0] == 10
 
@@ -34,8 +34,8 @@ class TestFullSync:
 
         assert report.tables_synced == 2
         assert report.total_rows == 15  # 10 gl + 5 subsidiary
-        assert cache_engine.has_table("gl_detail")
-        assert cache_engine.has_table("subsidiary")
+        assert cache_engine.has_table("fake__gl_detail")
+        assert cache_engine.has_table("fake__subsidiary")
 
     def test_full_replaces_data(
         self, fake_connector: FakeConnector, cache_engine: LocalCacheEngine
@@ -47,7 +47,7 @@ class TestFullSync:
         engine.sync_tables(["gl_detail"], mode="full")
 
         result = cache_engine.execute_query(
-            QueryRequest(sql="SELECT COUNT(*) AS cnt FROM gl_detail")
+            QueryRequest(sql="SELECT COUNT(*) AS cnt FROM fake__gl_detail")
         )
         # Should be 10, not 20 (full mode replaces)
         assert result.rows[0][0] == 10
@@ -65,7 +65,7 @@ class TestIncrementalSync:
         engine.sync_tables(["gl_detail"], mode="incremental")
 
         result = cache_engine.execute_query(
-            QueryRequest(sql="SELECT COUNT(*) AS cnt FROM gl_detail")
+            QueryRequest(sql="SELECT COUNT(*) AS cnt FROM fake__gl_detail")
         )
         # Incremental appends — FakeConnector returns all rows regardless of since
         # so this will be 20 (10 + 10)
@@ -96,7 +96,7 @@ class TestErrorHandling:
         assert report.tables_synced == 1
         assert report.tables_failed == 1
         assert len(report.errors) == 1
-        assert cache_engine.has_table("subsidiary")
+        assert cache_engine.has_table("fake__subsidiary")
 
     def test_sync_report_accuracy(
         self, fake_connector: FakeConnector, cache_engine: LocalCacheEngine

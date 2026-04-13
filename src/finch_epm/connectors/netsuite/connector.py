@@ -58,6 +58,7 @@ class NetSuiteConnector(ConnectorBase):
 
     connector_type: ClassVar[str] = "netsuite"
     display_name: ClassVar[str] = "NetSuite"
+    source_prefix: ClassVar[str] = "ns"
 
     def __init__(
         self,

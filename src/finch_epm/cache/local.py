@@ -262,3 +262,119 @@ class LocalCacheEngine(CacheEngine):
             [table_name],
         ).fetchone()
         return result is not None and result[0] > 0
+
+    def rename_table(self, old_name: str, new_name: str) -> None:
+        """Rename a table in the cache."""
+        self._conn.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+
+    def list_watermarks(
+        self, source_name: str, profile_name: str
+    ) -> list[SyncWatermark]:
+        """Return all watermarks for a given source and profile."""
+        rows = self._conn.execute(
+            """
+            SELECT table_name, last_synced_at, last_modified_value, row_count
+            FROM _finch_watermarks
+            WHERE source_name = ? AND profile_name = ?
+            """,
+            [source_name, profile_name],
+        ).fetchall()
+        return [
+            SyncWatermark(
+                source_name=source_name,
+                profile_name=profile_name,
+                table_name=row[0],
+                last_synced_at=row[1],
+                last_modified_value=row[2],
+                row_count=row[3],
+            )
+            for row in rows
+        ]
+
+    def validate_tables_exist(
+        self, table_names: list[str]
+    ) -> tuple[list[str], list[str]]:
+        """Check which tables exist in the cache.
+
+        Returns:
+            Tuple of ``(found, missing)`` table name lists.
+        """
+        found = [t for t in table_names if self.has_table(t)]
+        missing = [t for t in table_names if t not in found]
+        return found, missing
+
+    def get_staleness_multi_source(
+        self,
+        table_names: list[str],
+        freshness_threshold: timedelta = timedelta(hours=1),
+    ) -> StalenessInfo:
+        """Aggregate staleness across tables from potentially different sources.
+
+        Groups tables by source prefix (parsed from cache table names),
+        computes staleness per group, and returns the worst overall level.
+        """
+        from finch_epm.cache.models import SourceTableRef
+
+        if not table_names:
+            return StalenessInfo(level=StalenessLevel.MISSING)
+
+        # Collect all watermarks for the given table names
+        all_sync_times: list[datetime] = []
+        missing: list[str] = []
+
+        for table_name in table_names:
+            # Look up by cache table name across all source/profile combos
+            result = self._conn.execute(
+                """
+                SELECT last_synced_at FROM _finch_watermarks
+                WHERE table_name = ?
+                ORDER BY last_synced_at DESC LIMIT 1
+                """,
+                [table_name],
+            ).fetchone()
+
+            # Also try looking up by the un-prefixed raw name
+            if result is None:
+                try:
+                    ref = SourceTableRef.parse(table_name)
+                    result = self._conn.execute(
+                        """
+                        SELECT last_synced_at FROM _finch_watermarks
+                        WHERE table_name = ? AND source_name = (
+                            SELECT source_name FROM _finch_watermarks
+                            WHERE table_name = ? LIMIT 1
+                        )
+                        ORDER BY last_synced_at DESC LIMIT 1
+                        """,
+                        [ref.raw_table_name, ref.raw_table_name],
+                    ).fetchone()
+                except ValueError:
+                    pass
+
+            if result is None:
+                missing.append(table_name)
+            else:
+                all_sync_times.append(result[0])
+
+        if missing:
+            return StalenessInfo(
+                level=StalenessLevel.MISSING,
+                tables_involved=table_names,
+            )
+
+        oldest = min(all_sync_times)
+        newest = max(all_sync_times)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        level = (
+            StalenessLevel.FRESH
+            if (now - oldest) <= freshness_threshold
+            else StalenessLevel.STALE
+        )
+
+        return StalenessInfo(
+            level=level,
+            last_synced_at=newest,
+            tables_involved=table_names,
+            oldest_table_sync=oldest,
+        )
