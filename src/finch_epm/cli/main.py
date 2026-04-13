@@ -2239,3 +2239,323 @@ def links_import(file_path: str) -> None:
     path = existing.save()
     click.echo(f"Imported {len(imported.links)} link(s) and {len(imported.dimensions)} dimension(s)")
     click.echo(f"Saved to: {path}")
+
+
+# ---------------------------------------------------------------------------
+# map (compilation map — single source of truth for data linking)
+# ---------------------------------------------------------------------------
+
+
+@cli.group(name="map")
+def compilation_map_group() -> None:
+    """Manage the compilation map — the single source of truth that links
+    all data sources together through one master reference."""
+
+
+@compilation_map_group.command(name="show")
+def map_show() -> None:
+    """Display the current compilation map.
+
+    Shows every reference table, how each data source connects to it,
+    what rollups and flags are available, and where the map file lives.
+
+        finch-epm map show
+    """
+    from finch_epm.engine.compilation_map import CompilationMap
+
+    cmap = CompilationMap.load()
+    active_path = CompilationMap.get_active_path()
+
+    if not cmap.references:
+        click.echo("No compilation map configured.")
+        click.echo("Run: finch-epm map setup")
+        click.echo("Or:  finch-epm map use <path>  (point to a shared map)")
+        return
+
+    click.echo(f"\n  {cmap.name}")
+    if cmap.description:
+        click.echo(f"  {cmap.description}")
+    click.echo(f"  File: {active_path}")
+    click.echo()
+
+    for ref in cmap.references:
+        click.echo(f"  --- {ref.name.upper()} ---")
+        click.echo(f"  Table: {ref.table}")
+        click.echo(f"  ID: {ref.id_column}  Display: {ref.display_column}")
+
+        if ref.source_links:
+            click.echo(f"  Source Links:")
+            for sl in ref.source_links:
+                click.echo(f"    {sl.name}: {sl.table}.{sl.join_column} -> {ref.table}.{ref.id_column}")
+
+        if ref.rollups:
+            click.echo(f"  Rollups:")
+            for rl in ref.rollups:
+                click.echo(f"    {rl.display}: {rl.column}")
+
+        if ref.flag_groups:
+            click.echo(f"  Flags:")
+            for fg in ref.flag_groups:
+                flag_names = ", ".join(f.display or f.column for f in fg.flags)
+                click.echo(f"    {fg.display or fg.name}: {flag_names}")
+
+        click.echo()
+
+
+@compilation_map_group.command(name="use")
+@click.argument("path", type=click.Path(exists=True))
+def map_use(path: str) -> None:
+    """Point this install at a shared compilation map.
+
+    Use when IT has pre-loaded the map on a network share and every
+    user should use the same one.
+
+        finch-epm map use "\\\\server\\share\\compilation_map.yaml"
+        finch-epm map use /mnt/shared/compilation_map.yaml
+    """
+    from finch_epm.engine.compilation_map import CompilationMap
+
+    # Verify the file is a valid map
+    try:
+        cmap = CompilationMap.load(path)
+    except Exception as e:
+        click.echo(f"Error reading map: {e}")
+        raise SystemExit(1)
+
+    if not cmap.references:
+        click.echo("Warning: Map has no reference tables defined.")
+
+    CompilationMap.use_network_path(str(Path(path).resolve()))
+    click.echo(f"Pointed to: {path}")
+    click.echo(f"All users who run this command will share this map.")
+
+    if cmap.references:
+        click.echo(f"\nReferences: {', '.join(r.name for r in cmap.references)}")
+
+
+@compilation_map_group.command(name="import")
+@click.argument("file_path", type=click.Path(exists=True))
+def map_import(file_path: str) -> None:
+    """Import a compilation map from a team-shared file.
+
+    Copies the map into your local config. Use ``map use`` instead if
+    you want every user to point to the same live file.
+
+        finch-epm map import team_map.yaml
+    """
+    from finch_epm.engine.compilation_map import CompilationMap
+
+    imported = CompilationMap.load(file_path)
+    if not imported.references:
+        click.echo("Warning: Imported map has no reference tables.")
+
+    path = imported.save()
+    click.echo(f"Imported compilation map: {imported.name}")
+    click.echo(f"  References: {len(imported.references)}")
+    click.echo(f"  Saved to: {path}")
+
+
+@compilation_map_group.command(name="setup")
+def map_setup() -> None:
+    """Interactive compilation map setup.
+
+    Walks through your cached tables, identifies reference tables,
+    detects binary flags, and builds the map that links all your
+    data sources together.
+
+        finch-epm map setup
+    """
+    from finch_epm.cache.local import LocalCacheEngine
+    from finch_epm.cache.models import QueryRequest
+    from finch_epm.engine.compilation_map import (
+        CompilationMap,
+        FlagDefinition,
+        FlagGroup,
+        ReferenceTable,
+        RollupLevel,
+        SourceLink,
+    )
+    from finch_epm.engine.flags import detect_binary_columns
+    from finch_epm.paths import cache_db_path
+
+    click.echo("\n  Compilation Map Setup")
+    click.echo("  " + "=" * 50)
+    click.echo("  This builds the single source of truth that links")
+    click.echo("  all your data sources together.\n")
+
+    try:
+        cache = LocalCacheEngine(str(cache_db_path()), read_only=True)
+    except Exception:
+        click.echo("  Cache is locked (sync may be running). Try again after sync completes.")
+        raise SystemExit(1)
+
+    try:
+        # List all tables with row counts
+        r = cache.execute_query(QueryRequest(
+            sql="""SELECT table_name FROM information_schema.tables
+                   WHERE table_schema='main' AND table_name NOT LIKE '\\_%' ESCAPE '\\'
+                   ORDER BY table_name"""
+        ))
+        tables: list[dict[str, Any]] = []
+        for row in r.rows:
+            tname = row[0]
+            try:
+                cnt = cache.execute_query(QueryRequest(sql=f'SELECT COUNT(*) FROM "{tname}"'))
+                tables.append({"name": tname, "rows": cnt.rows[0][0]})
+            except Exception:
+                tables.append({"name": tname, "rows": 0})
+
+        # Separate into reference (small) and fact (large) tables
+        ref_tables = [t for t in tables if 0 < t["rows"] <= 5000]
+        fact_tables = [t for t in tables if t["rows"] > 5000]
+
+        click.echo("  Reference tables (candidates for compilation map):")
+        for i, t in enumerate(ref_tables, 1):
+            click.echo(f"    {i}. {t['name']} ({t['rows']:,} rows)")
+
+        click.echo(f"\n  Fact/transaction tables:")
+        for t in fact_tables:
+            click.echo(f"    {t['name']} ({t['rows']:,} rows)")
+
+        cmap = CompilationMap(name="Data Compilation Map")
+
+        # For each reference table, let user decide if it's a linking table
+        click.echo("\n  Which reference tables link your data sources?")
+        click.echo("  (These are the Location, Department, Entity tables)")
+        click.echo()
+
+        for ref_t in ref_tables:
+            tname = ref_t["name"]
+            use = click.confirm(f"  Use {tname} ({ref_t['rows']} rows) as a reference?", default=False)
+            if not use:
+                continue
+
+            # Show columns
+            cols = cache.execute_query(QueryRequest(
+                sql=f"SELECT * FROM \"{tname}\" LIMIT 5"
+            ))
+            click.echo(f"\n  Columns in {tname}:")
+            for i, col in enumerate(cols.column_names, 1):
+                sample = cols.rows[0][i - 1] if cols.rows else ""
+                click.echo(f"    {i}. {col} (e.g., {sample})")
+
+            # Pick ID and display columns
+            id_idx = click.prompt("  Which column is the ID?", type=int, default=1) - 1
+            id_col = cols.column_names[id_idx]
+            disp_idx = click.prompt("  Which column is the display name?", type=int, default=2) - 1
+            disp_col = cols.column_names[disp_idx]
+
+            ref_name = click.prompt("  Short name for this reference", default=tname.split("__")[-1].lower())
+
+            # Detect rollup columns (non-binary, non-ID string columns)
+            rollups: list[RollupLevel] = []
+            click.echo(f"\n  Which columns are rollup/grouping levels?")
+            for i, col in enumerate(cols.column_names):
+                if col in (id_col, disp_col):
+                    continue
+                # Check if it's a text column with few distinct values
+                try:
+                    distinct = cache.execute_query(QueryRequest(
+                        sql=f'SELECT COUNT(DISTINCT "{col}") FROM "{tname}"'
+                    ))
+                    n_distinct = distinct.rows[0][0]
+                    if 2 <= n_distinct <= 50:
+                        is_rollup = click.confirm(
+                            f"    {col} ({n_distinct} distinct values) — use as rollup?",
+                            default=True,
+                        )
+                        if is_rollup:
+                            display = click.prompt(f"    Display name for {col}", default=col)
+                            rollups.append(RollupLevel(column=col, display=display))
+                except Exception:
+                    pass
+
+            # Detect binary flags
+            candidates = detect_binary_columns(tname, cols.column_names, cols.rows)
+            flag_groups: list[FlagGroup] = []
+            if candidates:
+                click.echo(f"\n  Detected {len(candidates)} binary flag column(s):")
+                status_flags: list[FlagDefinition] = []
+                period_flags: list[FlagDefinition] = []
+                custom_flags: list[FlagDefinition] = []
+
+                for cand in candidates:
+                    cn = cand["column_name"]
+                    st = cand["suggested_type"]
+                    click.echo(f"    {cn} (suggested: {st})")
+
+                    choices = ["status", "period", "custom", "skip"]
+                    default_idx = choices.index(st) + 1 if st in choices else 1
+                    choice = click.prompt(
+                        f"    Type for {cn}",
+                        type=click.Choice(choices),
+                        default=choices[default_idx - 1],
+                    )
+
+                    if choice == "skip":
+                        continue
+
+                    display = cn.replace("_", " ").replace("FY", " FY").strip()
+                    fd = FlagDefinition(column=cn, display=display, active_value=1)
+
+                    if choice == "status":
+                        status_flags.append(fd)
+                    elif choice == "period":
+                        period_flags.append(fd)
+                    else:
+                        custom_flags.append(fd)
+
+                if status_flags:
+                    flag_groups.append(FlagGroup(name="status", display="Status", flags=status_flags))
+                if period_flags:
+                    flag_groups.append(FlagGroup(name="periods", display="Period Membership", flags=period_flags))
+                if custom_flags:
+                    flag_groups.append(FlagGroup(name="custom", display="Custom Filters", flags=custom_flags))
+
+            # Ask which fact tables link to this reference
+            source_links: list[SourceLink] = []
+            click.echo(f"\n  Which fact tables link to {tname}?")
+            for ft in fact_tables:
+                link = click.confirm(f"    {ft['name']} ({ft['rows']:,} rows)?", default=False)
+                if not link:
+                    continue
+
+                ft_cols = cache.execute_query(QueryRequest(
+                    sql=f"SELECT column_name FROM information_schema.columns WHERE table_name='{ft['name']}' ORDER BY ordinal_position"
+                ))
+                ft_col_names = [r[0] for r in ft_cols.rows]
+                click.echo(f"    Columns in {ft['name']}:")
+                for j, c in enumerate(ft_col_names, 1):
+                    click.echo(f"      {j}. {c}")
+                jc_idx = click.prompt(f"    Which column joins to {id_col}?", type=int) - 1
+                join_col = ft_col_names[jc_idx]
+
+                sl_name = click.prompt("    Link name", default=ft["name"].split("__")[0].lower())
+                source_links.append(SourceLink(
+                    name=sl_name,
+                    table=ft["name"],
+                    join_column=join_col,
+                ))
+
+            cmap.references.append(ReferenceTable(
+                name=ref_name,
+                table=tname,
+                id_column=id_col,
+                display_column=disp_col,
+                source_links=source_links,
+                rollups=rollups,
+                flag_groups=flag_groups,
+            ))
+
+        if cmap.references:
+            path = cmap.save()
+            click.echo(f"\n  Compilation map saved to: {path}")
+            click.echo(f"  References: {', '.join(r.name for r in cmap.references)}")
+            click.echo(f"\n  View:   finch-epm map show")
+            click.echo(f"  Share:  Send {path.name} to your team")
+            click.echo(f"  IT:     finch-epm map use \\\\server\\share\\{path.name}")
+        else:
+            click.echo("\n  No reference tables selected. Run 'finch-epm map setup' when ready.")
+
+    finally:
+        cache.close()
