@@ -578,12 +578,19 @@ class NetSuiteConnector(ConnectorBase):
                 all_rows = all_rows[: -len(result.rows)]
                 for q_start, q_end in [(1, 3), (4, 6), (7, 9), (10, 12)]:
                     q_where = list(base_where)
-                    q_where.append(
-                        f"EXTRACT(YEAR FROM lastmodifieddate) = {year}"
-                    )
-                    q_where.append(
-                        f"EXTRACT(MONTH FROM lastmodifieddate) BETWEEN {q_start} AND {q_end}"
-                    )
+                    if is_junction:
+                        q_where.append(
+                            f"transaction IN (SELECT id FROM Transaction "
+                            f"WHERE EXTRACT(YEAR FROM lastmodifieddate) = {year} "
+                            f"AND EXTRACT(MONTH FROM lastmodifieddate) BETWEEN {q_start} AND {q_end})"
+                        )
+                    else:
+                        q_where.append(
+                            f"EXTRACT(YEAR FROM lastmodifieddate) = {year}"
+                        )
+                        q_where.append(
+                            f"EXTRACT(MONTH FROM lastmodifieddate) BETWEEN {q_start} AND {q_end}"
+                        )
                     q_sql = f"SELECT * FROM {table_name} WHERE " + " AND ".join(q_where)
                     q_result = self._suiteql.execute(q_sql, limit=limit)
                     all_rows.extend(q_result.rows)
