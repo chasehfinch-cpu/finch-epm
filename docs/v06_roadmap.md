@@ -73,3 +73,33 @@ Currently only PowerShell (Windows). Need Bash/Ansible equivalents.
 
 ### 12. P&L hierarchy expand/collapse in dashboard UI
 The CSS classes for 5-level hierarchy coloring exist. The JavaScript for expand/collapse (clickable parent rows, toggle children) needs to be wired into the table renderer.
+
+### 13. Metrics layer (cross-source calculated measures)
+**Problem**: Finance teams need metrics that combine data from multiple sources with different conventions. Example: Revenue Per Visit = NetSuite revenue (negative by convention, monthly close) / SQL Server billable visits (positive, by date of service). Different sign conventions, time grains, and keys make this impossible in raw SQL without deep knowledge of both systems.
+
+**Solution**: A `metrics.yaml` file where IT/finance defines reusable metrics:
+```yaml
+metrics:
+  revenue_per_visit:
+    numerator:
+      source: netsuite
+      measure: "SUM(amount * -1)"
+      filter: "accttype IN ('Income','OthIncome')"
+    denominator:
+      source: sqlserver
+      measure: "COUNT(*)"
+      filter: "Billable_NonBillable = 'Billable'"
+    time_alignment: monthly  # Align both sources to same month before dividing
+    sign: positive
+    format: currency
+```
+
+The metrics layer would handle:
+- Sign convention normalization (NS negative → positive for display)
+- Time grain alignment (align DOS dates with NS period close dates)
+- Cross-source math (numerator from one source, denominator from another)
+- Shared via the same YAML file pattern as compilation map and COA
+
+Dashboard authors reference `metric: revenue_per_visit` instead of writing complex cross-source SQL. The metric definition is shareable and version-controlled.
+
+**Files**: New `src/finch_epm/engine/metrics.py`, integration into resolver and prompt builder

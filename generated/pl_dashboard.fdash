@@ -1,7 +1,8 @@
 name: P&L Financial Dashboard
-description: Profit & Loss analysis with revenue, expense, and EBITDA
+description: Profit & Loss by location, department, and entity — driven by IFS reference tables
 sources:
   - netsuite/ecp
+  - sqlserver/financedw
 
 theme: financial
 
@@ -13,23 +14,65 @@ filters:
   - name: year
     label: Year
     query: >
-      SELECT DISTINCT SPLIT_PART(trandate, '/', 3) AS year
-      FROM Transaction
-      WHERE CAST(SPLIT_PART(trandate, '/', 3) AS INTEGER) >= 2020
+      SELECT DISTINCT SPLIT_PART(tx.trandate, '/', 3) AS year
+      FROM Transaction tx
+      WHERE CAST(SPLIT_PART(tx.trandate, '/', 3) AS INTEGER) >= 2022
       ORDER BY year DESC
     parameter: selected_year
-    default: "2024"
+    default: "2025"
 
-  - name: subsidiary
-    label: Subsidiary
+  - name: status
+    label: Status
     query: >
-      SELECT DISTINCT s.name AS subsidiary
-      FROM Subsidiary s
-      WHERE s.isinactive = 'F' AND s.name NOT LIKE '%limination%'
-      ORDER BY s.name
-    parameter: selected_subsidiary
+      SELECT 'Active' AS status UNION ALL
+      SELECT 'Terminated' UNION ALL
+      SELECT 'Unused'
+    parameter: selected_status
+
+  - name: core_year
+    label: Core Year
+    query: >
+      SELECT 'Core FY26' AS core_year UNION ALL
+      SELECT 'Core FY25' UNION ALL
+      SELECT 'Core FY24' UNION ALL
+      SELECT 'Core FY23'
+    parameter: selected_core_year
+
+  - name: group_rollup
+    label: Group
+    query: >
+      SELECT DISTINCT GroupRollup AS group_rollup
+      FROM ss__dbo__IFSLocations
+      ORDER BY GroupRollup
+    parameter: selected_group
+
+  - name: location
+    label: Location
+    query: >
+      SELECT DISTINCT LocationName AS location
+      FROM ss__dbo__IFSLocations
+      ORDER BY LocationName
+    parameter: selected_location
+
+  - name: department
+    label: Department
+    query: >
+      SELECT DISTINCT DepartmentRollup AS department
+      FROM ss__dbo__IFSDepartments
+      WHERE DepartmentRollup IS NOT NULL AND DepartmentRollup != ''
+      ORDER BY DepartmentRollup
+    parameter: selected_department
+
+  - name: entity
+    label: Entity
+    query: >
+      SELECT DISTINCT EntityName AS entity
+      FROM ss__dbo__IFSEntities
+      ORDER BY EntityName
+    parameter: selected_entity
 
 queries:
+  # === KPI totals ===
   - name: kpis
     sql: |
       SELECT
@@ -48,9 +91,32 @@ queries:
       FROM TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
       JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN TransactionLine tl
+        ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
+        AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
+      LEFT JOIN ss__dbo__IFSLocations loc
+        ON 'L' || CAST(tl.location AS VARCHAR) = loc.LocationID
+      LEFT JOIN ss__dbo__IFSDepartments dept
+        ON 'D' || CAST(tl.department AS VARCHAR) = dept.DepartmentID
+      LEFT JOIN ss__dbo__IFSEntities ent
+        ON 'E' || CAST(tl.subsidiary AS VARCHAR) = ent.EntityID
       WHERE t.posting = 'T'
         AND (:selected_year IS NULL OR SPLIT_PART(tx.trandate, '/', 3) = :selected_year)
+        AND (:selected_group IS NULL OR loc.GroupRollup = :selected_group)
+        AND (:selected_location IS NULL OR loc.LocationName = :selected_location)
+        AND (:selected_department IS NULL OR dept.DepartmentRollup = :selected_department)
+        AND (:selected_entity IS NULL OR ent.EntityName = :selected_entity)
+        AND (:selected_status IS NULL
+             OR (:selected_status = 'Active' AND loc.ActiveBusiness = 1)
+             OR (:selected_status = 'Terminated' AND loc.TerminatedBusiness = 1)
+             OR (:selected_status = 'Unused' AND loc.Unused = 1))
+        AND (:selected_core_year IS NULL
+             OR (:selected_core_year = 'Core FY26' AND loc.CoreFY26 = 1)
+             OR (:selected_core_year = 'Core FY25' AND loc.CoreFY25 = 1)
+             OR (:selected_core_year = 'Core FY24' AND loc.CoreFY24 = 1)
+             OR (:selected_core_year = 'Core FY23' AND loc.CoreFY23 = 1))
 
+  # === Monthly trend ===
   - name: monthly
     sql: |
       SELECT
@@ -62,15 +128,38 @@ queries:
       FROM TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
       JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN TransactionLine tl
+        ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
+        AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
+      LEFT JOIN ss__dbo__IFSLocations loc
+        ON 'L' || CAST(tl.location AS VARCHAR) = loc.LocationID
+      LEFT JOIN ss__dbo__IFSDepartments dept
+        ON 'D' || CAST(tl.department AS VARCHAR) = dept.DepartmentID
+      LEFT JOIN ss__dbo__IFSEntities ent
+        ON 'E' || CAST(tl.subsidiary AS VARCHAR) = ent.EntityID
       WHERE t.posting = 'T'
         AND (:selected_year IS NULL OR SPLIT_PART(tx.trandate, '/', 3) = :selected_year)
+        AND (:selected_group IS NULL OR loc.GroupRollup = :selected_group)
+        AND (:selected_location IS NULL OR loc.LocationName = :selected_location)
+        AND (:selected_department IS NULL OR dept.DepartmentRollup = :selected_department)
+        AND (:selected_entity IS NULL OR ent.EntityName = :selected_entity)
+        AND (:selected_status IS NULL
+             OR (:selected_status = 'Active' AND loc.ActiveBusiness = 1)
+             OR (:selected_status = 'Terminated' AND loc.TerminatedBusiness = 1)
+             OR (:selected_status = 'Unused' AND loc.Unused = 1))
+        AND (:selected_core_year IS NULL
+             OR (:selected_core_year = 'Core FY26' AND loc.CoreFY26 = 1)
+             OR (:selected_core_year = 'Core FY25' AND loc.CoreFY25 = 1)
+             OR (:selected_core_year = 'Core FY24' AND loc.CoreFY24 = 1)
+             OR (:selected_core_year = 'Core FY23' AND loc.CoreFY23 = 1))
       GROUP BY month
       ORDER BY month
 
-  - name: rev_by_sub
+  # === Revenue by Group (IFS GroupRollup) ===
+  - name: rev_by_group
     sql: |
       SELECT
-        s.name AS subsidiary,
+        COALESCE(loc.GroupRollup, '(Unmapped)') AS group_name,
         SUM(CAST(t.amount AS DOUBLE)) * -1 AS revenue
       FROM TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
@@ -78,15 +167,70 @@ queries:
       JOIN TransactionLine tl
         ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
         AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
-      LEFT JOIN Subsidiary s ON CAST(tl.subsidiary AS INTEGER) = CAST(s.id AS INTEGER)
+      LEFT JOIN ss__dbo__IFSLocations loc
+        ON 'L' || CAST(tl.location AS VARCHAR) = loc.LocationID
+      LEFT JOIN ss__dbo__IFSEntities ent
+        ON 'E' || CAST(tl.subsidiary AS VARCHAR) = ent.EntityID
       WHERE t.posting = 'T'
         AND a.accttype IN ('Income','OthIncome')
         AND (:selected_year IS NULL OR SPLIT_PART(tx.trandate, '/', 3) = :selected_year)
-      GROUP BY s.name
+        AND (:selected_group IS NULL OR loc.GroupRollup = :selected_group)
+        AND (:selected_location IS NULL OR loc.LocationName = :selected_location)
+        AND (:selected_entity IS NULL OR ent.EntityName = :selected_entity)
+        AND (:selected_status IS NULL
+             OR (:selected_status = 'Active' AND loc.ActiveBusiness = 1)
+             OR (:selected_status = 'Terminated' AND loc.TerminatedBusiness = 1)
+             OR (:selected_status = 'Unused' AND loc.Unused = 1))
+        AND (:selected_core_year IS NULL
+             OR (:selected_core_year = 'Core FY26' AND loc.CoreFY26 = 1)
+             OR (:selected_core_year = 'Core FY25' AND loc.CoreFY25 = 1)
+             OR (:selected_core_year = 'Core FY24' AND loc.CoreFY24 = 1)
+             OR (:selected_core_year = 'Core FY23' AND loc.CoreFY23 = 1))
+      GROUP BY group_name
       HAVING SUM(CAST(t.amount AS DOUBLE)) * -1 > 0
       ORDER BY revenue DESC
 
-  - name: pl_detail
+  # === Expense by Department Rollup ===
+  - name: expense_by_dept
+    sql: |
+      SELECT
+        COALESCE(dept.DepartmentRollup, '(Unmapped)') AS department,
+        SUM(CAST(t.amount AS DOUBLE)) AS expense
+      FROM TransactionAccountingLine t
+      JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
+      JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN TransactionLine tl
+        ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
+        AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
+      LEFT JOIN ss__dbo__IFSDepartments dept
+        ON 'D' || CAST(tl.department AS VARCHAR) = dept.DepartmentID
+      LEFT JOIN ss__dbo__IFSLocations loc
+        ON 'L' || CAST(tl.location AS VARCHAR) = loc.LocationID
+      LEFT JOIN ss__dbo__IFSEntities ent
+        ON 'E' || CAST(tl.subsidiary AS VARCHAR) = ent.EntityID
+      WHERE t.posting = 'T'
+        AND a.accttype IN ('Expense','OthExpense')
+        AND (:selected_year IS NULL OR SPLIT_PART(tx.trandate, '/', 3) = :selected_year)
+        AND (:selected_group IS NULL OR loc.GroupRollup = :selected_group)
+        AND (:selected_location IS NULL OR loc.LocationName = :selected_location)
+        AND (:selected_department IS NULL OR dept.DepartmentRollup = :selected_department)
+        AND (:selected_entity IS NULL OR ent.EntityName = :selected_entity)
+        AND (:selected_status IS NULL
+             OR (:selected_status = 'Active' AND loc.ActiveBusiness = 1)
+             OR (:selected_status = 'Terminated' AND loc.TerminatedBusiness = 1)
+             OR (:selected_status = 'Unused' AND loc.Unused = 1))
+        AND (:selected_core_year IS NULL
+             OR (:selected_core_year = 'Core FY26' AND loc.CoreFY26 = 1)
+             OR (:selected_core_year = 'Core FY25' AND loc.CoreFY25 = 1)
+             OR (:selected_core_year = 'Core FY24' AND loc.CoreFY24 = 1)
+             OR (:selected_core_year = 'Core FY23' AND loc.CoreFY23 = 1))
+      GROUP BY department
+      HAVING SUM(CAST(t.amount AS DOUBLE)) > 10000
+      ORDER BY expense DESC
+      LIMIT 15
+
+  # === P&L by account type ===
+  - name: pl_summary
     sql: |
       SELECT
         CASE
@@ -102,33 +246,70 @@ queries:
       FROM TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
       JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
+      JOIN TransactionLine tl
+        ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
+        AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
+      LEFT JOIN ss__dbo__IFSLocations loc
+        ON 'L' || CAST(tl.location AS VARCHAR) = loc.LocationID
+      LEFT JOIN ss__dbo__IFSDepartments dept
+        ON 'D' || CAST(tl.department AS VARCHAR) = dept.DepartmentID
+      LEFT JOIN ss__dbo__IFSEntities ent
+        ON 'E' || CAST(tl.subsidiary AS VARCHAR) = ent.EntityID
       WHERE t.posting = 'T'
         AND a.accttype IN ('Income','OthIncome','Expense','OthExpense','COGS','DeferExpense')
         AND (:selected_year IS NULL OR SPLIT_PART(tx.trandate, '/', 3) = :selected_year)
+        AND (:selected_group IS NULL OR loc.GroupRollup = :selected_group)
+        AND (:selected_location IS NULL OR loc.LocationName = :selected_location)
+        AND (:selected_department IS NULL OR dept.DepartmentRollup = :selected_department)
+        AND (:selected_entity IS NULL OR ent.EntityName = :selected_entity)
+        AND (:selected_status IS NULL
+             OR (:selected_status = 'Active' AND loc.ActiveBusiness = 1)
+             OR (:selected_status = 'Terminated' AND loc.TerminatedBusiness = 1)
+             OR (:selected_status = 'Unused' AND loc.Unused = 1))
+        AND (:selected_core_year IS NULL
+             OR (:selected_core_year = 'Core FY26' AND loc.CoreFY26 = 1)
+             OR (:selected_core_year = 'Core FY25' AND loc.CoreFY25 = 1)
+             OR (:selected_core_year = 'Core FY24' AND loc.CoreFY24 = 1)
+             OR (:selected_core_year = 'Core FY23' AND loc.CoreFY23 = 1))
       GROUP BY category
       ORDER BY amount DESC
 
-  - name: expense_dept
+  # === Revenue by Entity ===
+  - name: rev_by_entity
     sql: |
       SELECT
-        COALESCE(d.name, '(No Department)') AS department,
-        SUM(CAST(t.amount AS DOUBLE)) AS expense
+        COALESCE(ent.EntityName, '(Unmapped)') AS entity,
+        SUM(CAST(t.amount AS DOUBLE)) * -1 AS revenue
       FROM TransactionAccountingLine t
       JOIN Account a ON CAST(t.account AS INTEGER) = CAST(a.id AS INTEGER)
       JOIN Transaction tx ON CAST(t.transaction AS INTEGER) = CAST(tx.id AS INTEGER)
       JOIN TransactionLine tl
         ON CAST(t.transaction AS INTEGER) = CAST(tl.transaction AS INTEGER)
         AND CAST(t.transactionline AS INTEGER) = CAST(tl.id AS INTEGER)
-      LEFT JOIN Department d ON CAST(tl.department AS INTEGER) = CAST(d.id AS INTEGER)
+      LEFT JOIN ss__dbo__IFSEntities ent
+        ON 'E' || CAST(tl.subsidiary AS VARCHAR) = ent.EntityID
+      LEFT JOIN ss__dbo__IFSLocations loc
+        ON 'L' || CAST(tl.location AS VARCHAR) = loc.LocationID
       WHERE t.posting = 'T'
-        AND a.accttype IN ('Expense','OthExpense')
+        AND a.accttype IN ('Income','OthIncome')
         AND (:selected_year IS NULL OR SPLIT_PART(tx.trandate, '/', 3) = :selected_year)
-      GROUP BY COALESCE(d.name, '(No Department)')
-      HAVING SUM(CAST(t.amount AS DOUBLE)) > 10000
-      ORDER BY expense DESC
-      LIMIT 15
+        AND (:selected_group IS NULL OR loc.GroupRollup = :selected_group)
+        AND (:selected_entity IS NULL OR ent.EntityName = :selected_entity)
+        AND (:selected_status IS NULL
+             OR (:selected_status = 'Active' AND loc.ActiveBusiness = 1)
+             OR (:selected_status = 'Terminated' AND loc.TerminatedBusiness = 1)
+             OR (:selected_status = 'Unused' AND loc.Unused = 1))
+        AND (:selected_core_year IS NULL
+             OR (:selected_core_year = 'Core FY26' AND loc.CoreFY26 = 1)
+             OR (:selected_core_year = 'Core FY25' AND loc.CoreFY25 = 1)
+             OR (:selected_core_year = 'Core FY24' AND loc.CoreFY24 = 1)
+             OR (:selected_core_year = 'Core FY23' AND loc.CoreFY23 = 1))
+      GROUP BY entity
+      HAVING SUM(CAST(t.amount AS DOUBLE)) * -1 > 0
+      ORDER BY revenue DESC
 
 charts:
+  # KPI row
   - type: kpi
     title: Total Revenue
     data: kpis
@@ -165,6 +346,7 @@ charts:
     label: Expense / Revenue
     width: kpi
 
+  # Monthly trend
   - type: line
     title: Monthly Revenue vs Expense
     data: monthly
@@ -174,29 +356,42 @@ charts:
     width: full
     height: 400
 
+  # Revenue breakdowns
   - type: bar
-    title: Revenue by Subsidiary
-    data: rev_by_sub
-    x: subsidiary
+    title: Revenue by Group
+    data: rev_by_group
+    x: group_name
     y: revenue
     colors: ["#1e3a8a"]
     width: half
     height: 420
-    cross_filter: subsidiary
+    cross_filter: group_name
 
   - type: bar
+    title: Revenue by Entity
+    data: rev_by_entity
+    x: entity
+    y: revenue
+    colors: ["#2563eb"]
+    width: half
+    height: 420
+    cross_filter: entity
+
+  # Expense breakdown
+  - type: bar
     title: Expense by Department
-    data: expense_dept
+    data: expense_by_dept
     x: department
     y: expense
     colors: ["#dc2626"]
     width: half
     height: 420
 
+  # P&L summary table
   - type: table
     title: P&L Summary
-    data: pl_detail
-    width: full
+    data: pl_summary
+    width: half
     height: 300
     columns:
       amount: { format: currency, prefix: "$" }
