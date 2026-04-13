@@ -101,7 +101,17 @@ class SyncEngine:
         results: list[TableSyncResult] = []
         errors: list[str] = []
 
-        for table_name in table_names:
+        _write_sync_status(syncing=True, table="starting", tables_total=len(table_names))
+
+        for idx, table_name in enumerate(table_names):
+            _write_sync_status(
+                syncing=True,
+                table=table_name,
+                table_index=idx + 1,
+                tables_total=len(table_names),
+                rows_so_far=sum(r.rows_synced for r in results),
+            )
+
             result = self._sync_one_table(table_name, mode)
             results.append(result)
 
@@ -114,6 +124,14 @@ class SyncEngine:
                 logger.warning("Sync failed for %s: %s", table_name, result.error)
 
         elapsed = time.monotonic() - overall_start
+
+        _write_sync_status(
+            syncing=False,
+            tables_total=len(table_names),
+            tables_completed=sum(1 for r in results if r.success),
+            rows_so_far=sum(r.rows_synced for r in results),
+            elapsed_seconds=elapsed,
+        )
 
         return SyncReport(
             tables_synced=sum(1 for r in results if r.success),
@@ -304,3 +322,42 @@ def migrate_to_namespaced_tables(
         logger.info("Renamed cache table %s -> %s", old_name, new_name)
 
     return renamed
+
+
+# ---------------------------------------------------------------------------
+# Sync status file — visible to dashboard UI and `finch-epm status`
+# ---------------------------------------------------------------------------
+
+
+def _sync_status_path() -> Path:
+    """Path to the sync status JSON file."""
+    from finch_epm.paths import data_dir
+    return data_dir() / "sync_status.json"
+
+
+def _write_sync_status(**kwargs: Any) -> None:
+    """Write current sync status to a JSON file.
+
+    The dashboard server and ``finch-epm status`` read this file to
+    show sync progress to users. Non-blocking — failures are silently
+    ignored so they never interrupt a sync.
+    """
+    import json
+    try:
+        kwargs["updated_at"] = datetime.now(timezone.utc).isoformat()
+        path = _sync_status_path()
+        path.write_text(json.dumps(kwargs, default=str), encoding="utf-8")
+    except Exception:
+        pass  # Never interrupt a sync for a status write
+
+
+def read_sync_status() -> dict[str, Any]:
+    """Read the current sync status. Returns empty dict if no status available."""
+    import json
+    try:
+        path = _sync_status_path()
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}

@@ -187,6 +187,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception:
             pass  # Theme system not available
 
+        # Include sync status for progress banner
+        try:
+            from finch_epm.cache.sync import read_sync_status
+            sync_status = read_sync_status()
+            if sync_status.get("syncing"):
+                table = sync_status.get("table", "")
+                t_idx = sync_status.get("table_index", 0)
+                t_total = sync_status.get("tables_total", 0)
+                rows = sync_status.get("rows_so_far", 0)
+                data["sync_status"] = {
+                    "syncing": True,
+                    "table": table,
+                    "progress": f"Syncing {table} ({t_idx}/{t_total})",
+                    "rows_so_far": rows,
+                }
+            else:
+                data["sync_status"] = {"syncing": False}
+        except Exception:
+            pass
+
         # Include unclassified item count as a dashboard warning
         try:
             from finch_epm.engine.classification_models import ClassificationStore

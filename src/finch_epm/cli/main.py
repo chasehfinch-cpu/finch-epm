@@ -1231,6 +1231,114 @@ def _import_config_bundle(config_path: str) -> None:
         click.echo("Expected: compilation_map.yaml, coa.yaml, flags.yaml")
 
 
+@cli.command()
+def status() -> None:
+    """Show the current state of finch-epm: data sources, sync status,
+    compilation map, and chart of accounts.
+
+    Use this to check if sync is running, when data was last updated,
+    and whether the configuration is complete.
+
+        finch-epm status
+    """
+    from finch_epm.cache.sync import read_sync_status
+    from finch_epm.profiles.manager import ProfileManager
+
+    pm = ProfileManager()
+    profiles = [(ct, pn) for ct, pn in pm.list_profiles() if ct != "llm"]
+
+    click.echo()
+    click.echo("  finch-epm status")
+    click.echo("  " + "=" * 50)
+
+    # Data sources
+    click.echo(f"\n  Data sources: {len(profiles)} configured")
+    for ct, pn in profiles:
+        click.echo(f"    {ct}/{pn}")
+
+    # Sync status
+    sync = read_sync_status()
+    if sync.get("syncing"):
+        table = sync.get("table", "?")
+        t_idx = sync.get("table_index", 0)
+        t_total = sync.get("tables_total", 0)
+        rows = sync.get("rows_so_far", 0)
+        click.echo(f"\n  Sync: RUNNING")
+        click.echo(f"    Table: {table} ({t_idx}/{t_total})")
+        if rows:
+            click.echo(f"    Rows synced so far: {rows:,}")
+    elif sync.get("updated_at"):
+        click.echo(f"\n  Sync: Complete")
+        click.echo(f"    Last finished: {sync.get('updated_at', '?')}")
+        click.echo(f"    Tables: {sync.get('tables_completed', '?')}/{sync.get('tables_total', '?')}")
+        click.echo(f"    Total rows: {sync.get('rows_so_far', 0):,}")
+    else:
+        click.echo(f"\n  Sync: No sync has been run yet")
+
+    # Cache stats
+    try:
+        from finch_epm.cache.local import LocalCacheEngine
+        from finch_epm.cache.models import QueryRequest
+        from finch_epm.paths import cache_db_path
+
+        cache = LocalCacheEngine(str(cache_db_path()), read_only=True)
+        r = cache.execute_query(QueryRequest(
+            sql="""SELECT table_name FROM information_schema.tables
+                   WHERE table_schema='main' AND table_name NOT LIKE '\\_%' ESCAPE '\\'"""
+        ))
+        total_rows = 0
+        for row in r.rows:
+            try:
+                cnt = cache.execute_query(QueryRequest(sql=f'SELECT COUNT(*) FROM "{row[0]}"'))
+                total_rows += cnt.rows[0][0]
+            except Exception:
+                pass
+        click.echo(f"\n  Cache: {len(r.rows)} tables, {total_rows:,} total rows")
+        cache.close()
+    except Exception as e:
+        if "being used by another process" in str(e):
+            click.echo(f"\n  Cache: Locked (sync in progress)")
+        else:
+            click.echo(f"\n  Cache: Not available")
+
+    # Compilation map
+    try:
+        from finch_epm.engine.compilation_map import CompilationMap
+        cmap = CompilationMap.load()
+        if cmap.references:
+            refs = ", ".join(r.name for r in cmap.references)
+            click.echo(f"\n  Compilation map: {len(cmap.references)} references ({refs})")
+            click.echo(f"    File: {CompilationMap.get_active_path()}")
+        else:
+            click.echo(f"\n  Compilation map: Not configured")
+            click.echo(f"    Run: finch-epm map setup")
+    except Exception:
+        click.echo(f"\n  Compilation map: Not configured")
+
+    # Chart of accounts
+    try:
+        from finch_epm.engine.coa import ChartOfAccounts
+        coa = ChartOfAccounts.load()
+        if coa.accounts:
+            counts = coa.count_by_category()
+            summary = ", ".join(f"{c}: {n}" for c, n in sorted(counts.items()) if n > 0)
+            click.echo(f"\n  Chart of accounts: {len(coa.accounts)} accounts ({summary})")
+        else:
+            click.echo(f"\n  Chart of accounts: Not configured")
+            click.echo(f"    Run: finch-epm coa setup")
+    except Exception:
+        click.echo(f"\n  Chart of accounts: Not configured")
+
+    # LLM profiles
+    llm_profiles = pm.list_profiles(connector_type="llm")
+    if llm_profiles:
+        click.echo(f"\n  LLM providers: {len(llm_profiles)} configured")
+    else:
+        click.echo(f"\n  LLM providers: None (optional)")
+
+    click.echo()
+
+
 def _show_prerequisites(connector: str) -> None:
     """Show what the user needs before connecting to a data source."""
     if connector == "netsuite":
