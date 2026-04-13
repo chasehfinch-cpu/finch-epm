@@ -69,9 +69,60 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_filter_options(filter_name)
         elif path == "/api/staleness":
             self._serve_staleness()
+        elif path == "/mapping":
+            self._serve_template("mapping.html")
+        elif path == "/api/mapping/tables":
+            self._serve_mapping_tables()
+        elif path.startswith("/api/mapping/table/") and "/columns" in path:
+            table_name = path.split("/api/mapping/table/")[1].split("/columns")[0]
+            self._serve_mapping_columns(table_name)
+        elif path.startswith("/api/mapping/find-values/"):
+            parts = path.split("/api/mapping/find-values/")[1].split("/", 1)
+            if len(parts) == 2:
+                self._serve_mapping_find_values(parts[0], parts[1])
+            else:
+                self._send_error(400, "Expected /api/mapping/find-values/{table}/{column}")
+        elif path == "/api/mapping/current":
+            self._serve_mapping_current()
+        elif path == "/api/mapping/health":
+            self._serve_mapping_health()
         elif path.startswith("/static/"):
             filename = path[len("/static/"):]
             self._serve_static(filename)
+        else:
+            self._send_error(404, "Not found")
+
+    def do_POST(self) -> None:
+        """Handle POST requests for mapping link management."""
+        from urllib.parse import urlparse
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+
+        try:
+            data = json.loads(body)
+        except Exception:
+            self._send_error(400, "Invalid JSON")
+            return
+
+        if path == "/api/mapping/add-link":
+            from finch_epm.server.mapping_api import add_link
+            result = add_link(
+                reference_name=data.get("reference_name", ""),
+                source_table=data.get("source_table", ""),
+                source_column=data.get("source_column", ""),
+                transform=data.get("transform", ""),
+            )
+            self._send_json(result)
+        elif path == "/api/mapping/remove-link":
+            from finch_epm.server.mapping_api import remove_link
+            result = remove_link(
+                reference_name=data.get("reference_name", ""),
+                link_name=data.get("link_name", ""),
+            )
+            self._send_json(result)
         else:
             self._send_error(404, "Not found")
 
@@ -368,6 +419,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.exception("Export failed: %s", query_name)
             self._send_error(500, f"Export failed: {e}")
+
+    # -- Mapping API handlers --
+
+    def _serve_mapping_tables(self) -> None:
+        from finch_epm.server.mapping_api import get_all_tables
+        self._send_json({"tables": get_all_tables(self.server.cache)})
+
+    def _serve_mapping_columns(self, table_name: str) -> None:
+        from finch_epm.server.mapping_api import get_table_columns
+        self._send_json({"table": table_name, "columns": get_table_columns(self.server.cache, table_name)})
+
+    def _serve_mapping_find_values(self, table_name: str, column_name: str) -> None:
+        from finch_epm.server.mapping_api import find_value_matches
+        matches = find_value_matches(self.server.cache, table_name, column_name)
+        self._send_json({"source": f"{table_name}.{column_name}", "matches": matches})
+
+    def _serve_mapping_current(self) -> None:
+        from finch_epm.server.mapping_api import get_current_map
+        self._send_json(get_current_map())
+
+    def _serve_mapping_health(self) -> None:
+        from finch_epm.server.mapping_api import get_mapping_health
+        self._send_json(get_mapping_health(self.server.cache))
 
     def _serve_staleness(self) -> None:
         # Placeholder -- return basic staleness info

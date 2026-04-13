@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Mapping - finch-epm</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#eef1f5;color:#1a1a2e;font-size:14px}
+.header{background:linear-gradient(135deg,#1e3a8a 0%,#2563eb 100%);color:#fff;padding:20px 32px;display:flex;justify-content:space-between;align-items:center}
+.header h1{font-size:20px;font-weight:700}
+.header .subtitle{font-size:12px;opacity:0.9;margin-top:4px}
+.header .actions{display:flex;gap:8px}
+.header .actions a,.header .actions button{padding:8px 16px;border-radius:4px;font-size:13px;font-weight:600;text-decoration:none;cursor:pointer;border:none}
+.btn-back{background:rgba(255,255,255,0.2);color:#fff}
+.btn-back:hover{background:rgba(255,255,255,0.3)}
+.btn-save{background:#059669;color:#fff}
+.btn-save:hover{background:#047857}
+
+.container{display:flex;height:calc(100vh - 70px)}
+.sidebar{width:300px;background:#fff;border-right:1px solid #e4e7ec;overflow-y:auto;flex-shrink:0}
+.main{flex:1;overflow-y:auto;padding:20px}
+
+.section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#6b7280;padding:12px 16px 6px}
+.table-item{padding:8px 16px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f3f4f6;transition:background 0.1s}
+.table-item:hover{background:#f0f4ff}
+.table-item.active{background:#eff6ff;border-left:3px solid #2563eb}
+.table-item .name{font-size:13px;font-weight:500}
+.table-item .count{font-size:11px;color:#9ca3af}
+.table-item .badge{font-size:9px;padding:2px 6px;border-radius:3px;font-weight:600}
+.badge-ref{background:#dbeafe;color:#1e3a8a}
+.badge-fact{background:#f3f4f6;color:#6b7280}
+
+.panel{background:#fff;border-radius:8px;border:1px solid #e4e7ec;margin-bottom:16px;overflow:hidden}
+.panel-header{padding:14px 20px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center}
+.panel-header h2{font-size:15px;font-weight:600;color:#1a1a2e}
+.panel-header .hint{font-size:12px;color:#9ca3af}
+.panel-body{padding:0}
+
+.col-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:1px;background:#f0f0f0}
+.col-card{background:#fff;padding:12px 16px;cursor:pointer;transition:background 0.1s}
+.col-card:hover{background:#f0f4ff}
+.col-card.active{background:#eff6ff;outline:2px solid #2563eb;outline-offset:-2px}
+.col-card .col-name{font-size:13px;font-weight:600;color:#1e3a8a}
+.col-card .col-type{font-size:10px;color:#9ca3af;text-transform:uppercase}
+.col-card .col-distinct{font-size:11px;color:#6b7280;margin-top:2px}
+.col-card .col-samples{font-size:10px;color:#94a3b8;margin-top:4px;font-family:monospace}
+
+.match-list{padding:8px}
+.match-item{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:6px;transition:background 0.1s}
+.match-item:hover{background:#f9fafb}
+.match-info .match-table{font-size:13px;font-weight:600;color:#1a1a2e}
+.match-info .match-detail{font-size:11px;color:#6b7280;margin-top:2px}
+.match-rate{font-size:14px;font-weight:700;min-width:60px;text-align:right}
+.match-rate.high{color:#059669}
+.match-rate.medium{color:#f59e0b}
+.match-rate.low{color:#dc2626}
+.link-btn{padding:6px 14px;background:#2563eb;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer}
+.link-btn:hover{background:#1e40af}
+.link-btn.linked{background:#059669}
+
+.links-section{padding:16px 20px}
+.link-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:13px}
+.link-row .link-from{font-weight:600;color:#1e3a8a}
+.link-row .link-arrow{color:#9ca3af}
+.link-row .link-to{font-weight:600;color:#059669}
+.link-row .link-transform{font-size:11px;color:#f59e0b;margin-left:4px}
+.link-row .remove-btn{margin-left:auto;font-size:11px;color:#dc2626;cursor:pointer;background:none;border:none;padding:4px 8px}
+.link-row .remove-btn:hover{background:#fef2f2;border-radius:3px}
+
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:200px;color:#9ca3af;text-align:center;padding:32px}
+.empty-state .icon{font-size:36px;opacity:0.3;margin-bottom:12px}
+.empty-state .title{font-size:15px;font-weight:600;color:#374151;margin-bottom:6px}
+.empty-state .desc{font-size:12px;max-width:400px}
+
+.loading{display:flex;align-items:center;gap:8px;padding:20px;color:#6b7280;font-size:13px}
+.spinner{width:16px;height:16px;border:2px solid #e5e7eb;border-top-color:#2563eb;border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>Data Mapping</h1>
+    <div class="subtitle">Click a column to find matching values across all data sources</div>
+  </div>
+  <div class="actions">
+    <a href="/" class="btn-back">Back to Dashboard</a>
+  </div>
+</div>
+
+<div class="container">
+  <div class="sidebar" id="sidebar">
+    <div class="section-title">Reference Tables</div>
+    <div id="ref-tables"></div>
+    <div class="section-title" style="margin-top:8px">Fact Tables</div>
+    <div id="fact-tables"></div>
+  </div>
+
+  <div class="main" id="main">
+    <div class="empty-state" id="welcome">
+      <div class="icon">&#128279;</div>
+      <div class="title">Select a Table</div>
+      <div class="desc">Click a table on the left to see its columns. Then click a column header to find matching values in other datasets.</div>
+    </div>
+
+    <div id="column-panel" style="display:none">
+      <div class="panel">
+        <div class="panel-header">
+          <h2 id="selected-table-name">Table</h2>
+          <span class="hint">Click a column to find matches</span>
+        </div>
+        <div class="panel-body">
+          <div class="col-grid" id="columns-grid"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="match-panel" style="display:none">
+      <div class="panel">
+        <div class="panel-header">
+          <h2 id="match-title">Matches</h2>
+          <span class="hint" id="match-hint"></span>
+        </div>
+        <div class="panel-body">
+          <div class="match-list" id="match-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="links-panel">
+      <div class="panel-header">
+        <h2>Established Links</h2>
+        <span class="hint" id="link-count">0 links</span>
+      </div>
+      <div class="links-section" id="links-list">
+        <div class="empty-state" style="min-height:80px">
+          <div class="desc">No links established yet. Click a column above to discover connections.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  "use strict";
+
+  var selectedTable = null;
+  var selectedColumn = null;
+
+  function init() {
+    fetch("/api/mapping/tables")
+      .then(function(r){return r.json();})
+      .then(function(data) {
+        var refDiv = document.getElementById("ref-tables");
+        var factDiv = document.getElementById("fact-tables");
+        data.tables.forEach(function(t) {
+          var item = document.createElement("div");
+          item.className = "table-item";
+          item.innerHTML = '<div><div class="name">' + t.name + '</div></div>'
+            + '<div><span class="count">' + t.rows.toLocaleString() + '</span> '
+            + '<span class="badge ' + (t.type === "reference" ? "badge-ref" : "badge-fact") + '">'
+            + t.type + '</span></div>';
+          item.addEventListener("click", function() {
+            document.querySelectorAll(".table-item").forEach(function(el){el.classList.remove("active");});
+            item.classList.add("active");
+            selectTable(t.name);
+          });
+          (t.type === "reference" ? refDiv : factDiv).appendChild(item);
+        });
+      });
+    loadCurrentLinks();
+  }
+
+  function selectTable(tableName) {
+    selectedTable = tableName;
+    selectedColumn = null;
+    document.getElementById("welcome").style.display = "none";
+    document.getElementById("column-panel").style.display = "block";
+    document.getElementById("match-panel").style.display = "none";
+    document.getElementById("selected-table-name").textContent = tableName;
+
+    var grid = document.getElementById("columns-grid");
+    grid.innerHTML = '<div class="loading"><div class="spinner"></div>Loading columns...</div>';
+
+    fetch("/api/mapping/table/" + encodeURIComponent(tableName) + "/columns")
+      .then(function(r){return r.json();})
+      .then(function(data) {
+        grid.innerHTML = "";
+        data.columns.forEach(function(col) {
+          var card = document.createElement("div");
+          card.className = "col-card";
+          card.innerHTML = '<div class="col-name">' + col.name + '</div>'
+            + '<div class="col-type">' + col.type + '</div>'
+            + '<div class="col-distinct">' + col.distinct_count + ' distinct values</div>'
+            + '<div class="col-samples">' + (col.samples.slice(0,3).join(", ") || "—") + '</div>';
+          card.addEventListener("click", function() {
+            document.querySelectorAll(".col-card").forEach(function(el){el.classList.remove("active");});
+            card.classList.add("active");
+            findMatches(tableName, col.name);
+          });
+          grid.appendChild(card);
+        });
+      });
+  }
+
+  function findMatches(tableName, columnName) {
+    selectedColumn = columnName;
+    document.getElementById("match-panel").style.display = "block";
+    document.getElementById("match-title").textContent = tableName + "." + columnName;
+    document.getElementById("match-hint").textContent = "Scanning all tables...";
+
+    var list = document.getElementById("match-list");
+    list.innerHTML = '<div class="loading"><div class="spinner"></div>Scanning for matching values...</div>';
+
+    fetch("/api/mapping/find-values/" + encodeURIComponent(tableName) + "/" + encodeURIComponent(columnName))
+      .then(function(r){return r.json();})
+      .then(function(data) {
+        document.getElementById("match-hint").textContent = data.matches.length + " matches found";
+        list.innerHTML = "";
+
+        if (!data.matches.length) {
+          list.innerHTML = '<div class="empty-state" style="min-height:80px"><div class="desc">No matching values found in other tables.</div></div>';
+          return;
+        }
+
+        data.matches.forEach(function(m) {
+          var item = document.createElement("div");
+          item.className = "match-item";
+
+          var rateClass = m.match_rate >= 80 ? "high" : m.match_rate >= 40 ? "medium" : "low";
+          var transformLabel = "";
+          if (m.transform && m.transform !== "raw") {
+            transformLabel = ' <span style="color:#f59e0b;font-size:10px">(' + m.transform.replace("_", " ") + ')</span>';
+          }
+
+          item.innerHTML = '<div class="match-info">'
+            + '<div class="match-table">' + m.table + '.' + m.column + transformLabel + '</div>'
+            + '<div class="match-detail">' + m.table_rows.toLocaleString() + ' rows</div>'
+            + '</div>'
+            + '<div style="display:flex;align-items:center;gap:12px">'
+            + '<div class="match-rate ' + rateClass + '">' + m.match_rate + '%</div>'
+            + '<button class="link-btn" data-table="' + m.table + '" data-col="' + m.column + '" data-transform="' + (m.transform || '') + '">Link</button>'
+            + '</div>';
+
+          item.querySelector(".link-btn").addEventListener("click", function() {
+            addLink(tableName, m.table, m.column, m.transform || "");
+            this.textContent = "Linked";
+            this.classList.add("linked");
+            this.disabled = true;
+          });
+
+          list.appendChild(item);
+        });
+      });
+  }
+
+  function addLink(refTable, srcTable, srcColumn, transform) {
+    // For now, use the reference table name as a simple key
+    var refName = refTable.replace("ss__dbo__", "").replace("dbo__", "").toLowerCase();
+
+    fetch("/api/mapping/add-link", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        reference_name: refName,
+        source_table: srcTable,
+        source_column: srcColumn,
+        transform: transform,
+      }),
+    })
+    .then(function(r){return r.json();})
+    .then(function(result) {
+      if (result.error) {
+        alert("Link error: " + result.error);
+      }
+      loadCurrentLinks();
+    });
+  }
+
+  function loadCurrentLinks() {
+    fetch("/api/mapping/current")
+      .then(function(r){return r.json();})
+      .then(function(data) {
+        var container = document.getElementById("links-list");
+        var totalLinks = 0;
+
+        if (!data.references || !data.references.length) {
+          container.innerHTML = '<div class="empty-state" style="min-height:80px"><div class="desc">No compilation map configured. Links you create here will be saved automatically.</div></div>';
+          document.getElementById("link-count").textContent = "0 links";
+          return;
+        }
+
+        container.innerHTML = "";
+        data.references.forEach(function(ref) {
+          if (!ref.source_links.length) return;
+          var refLabel = document.createElement("div");
+          refLabel.style.cssText = "font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#6b7280;padding:8px 0 4px";
+          refLabel.textContent = ref.name + " (" + ref.table + ")";
+          container.appendChild(refLabel);
+
+          ref.source_links.forEach(function(sl) {
+            totalLinks++;
+            var row = document.createElement("div");
+            row.className = "link-row";
+            var transformLabel = sl.transform ? ' <span class="link-transform">' + sl.transform + '</span>' : '';
+            row.innerHTML = '<span class="link-from">' + ref.table + '.' + ref.id_column + '</span>'
+              + '<span class="link-arrow">&#8596;</span>'
+              + '<span class="link-to">' + sl.table + '.' + sl.join_column + '</span>'
+              + transformLabel
+              + '<button class="remove-btn" title="Remove link">&times;</button>';
+            row.querySelector(".remove-btn").addEventListener("click", function() {
+              fetch("/api/mapping/remove-link", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({reference_name: ref.name, link_name: sl.name}),
+              }).then(function(){loadCurrentLinks();});
+            });
+            container.appendChild(row);
+          });
+        });
+
+        document.getElementById("link-count").textContent = totalLinks + " link" + (totalLinks !== 1 ? "s" : "");
+      });
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
