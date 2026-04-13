@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.5.0-dev (2026-04-13)
+
+### Added
+
+- **Provider-agnostic LLM layer**: `finch-epm ask "build me a P&L dashboard"` generates validated .fdash files. Supports Anthropic (Claude), OpenAI (GPT), Google (Gemini), Ollama (local), and any OpenAI-compatible endpoint. No provider-specific SDK dependencies -- all use httpx.
+- **Model alias registry**: Generic aliases `fast`, `balanced`, `best` map to provider-specific model IDs. Updated in one file without touching provider code.
+- **Multiple LLM profiles**: `finch-epm llm configure --name work` stores credentials in OS keychain. Switch with `--llm-profile`.
+- **MCP server**: `finch-epm mcp` exposes 10 tools and 4 resources to any MCP client (Claude Desktop, Claude Code, Cursor). SQL injection protection via sqlglot. Docs in `docs/mcp.md`.
+- **Dashboard theming**: 7 built-in presets (modern_light, modern_dark, financial, financial_terminal, executive, wsj, monospace). Users can override tokens or create fully custom themes in .fdash. CSS custom properties throughout.
+- **P&L hierarchy styling**: 5-level row coloring (navy gradient), EBITDA (green), Net Income (cyan), statistics (gray). Indentation, expand/collapse support, frozen columns, variance coloring.
+- **Brand block**: company logo, name, and footer in dashboard headers via `brand:` in .fdash.
+- **Layout system**: Named rows with `full`/`half`/`third`/`quarter` fractions. Backward compatible -- dashboards without layout use auto-flow.
+- **Markdown narrative blocks**: `type: markdown` chart with `{{ query.column }}` value substitution.
+- **Custom CSS**: `custom_css:` field in .fdash, auto-scoped under `.fdash-root`.
+- **Schema change detection**: Detects new/removed tables and columns on re-crawl, prompts user to classify.
+- **Data classification system**: Classify tables and accounts as financial (P&L, balance sheet, cash flow), statistical, operational, qualitative. Persistent in `classifications.yaml`.
+- **Unmapped account detection**: Compares GL accounts against chart of accounts, flags accounts not in any P&L section.
+- **Chart of accounts engine**: Unlimited hierarchy levels. Auto-generate from account data or import team templates (YAML, JSON, CSV). `finch-epm coa setup/import/show/edit/unmapped`.
+- **Cross-source table linking**: Link columns across NetSuite, SQL Server, and other sources. Auto-detect dimension tables and suggest column matches. `finch-epm links setup/show/import`.
+- **Graceful dashboard degradation**: Per-chart error handling when shared .fdash files reference missing data. Actionable messages (missing tables, permissions, schema mismatch).
+- **Full data sync**: Removed 100K row cap. SuiteQL pagination runs until all rows fetched. Proper truncation detection.
+- **Dashboard frontend rewrite**: Professional styling matching financial reporting standards. Gradient header, styled filter toolbar, stat-card KPIs, dark tooltips, print support, empty states.
+
+### Changed
+
+- Test count: 188 -> 356
+- SuiteQL row limit: 100,000 -> 10,000,000 (effectively unlimited)
+- Filter parameters now auto-merge from filter definitions + URL params
+- Unresolved `:param_name` placeholders substitute NULL instead of crashing
+- pyproject.toml: added `sqlglot>=23.0` to core deps, `mcp>=1.0` as optional
+
 ## v0.3.0 (2026-04-10)
 
 ### Added

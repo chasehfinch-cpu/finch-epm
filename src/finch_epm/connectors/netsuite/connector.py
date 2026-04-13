@@ -438,6 +438,8 @@ class NetSuiteConnector(ConnectorBase):
         all_column_names: list[str] = []
         all_column_types: list[ColumnType] = []
         all_rows: list[list[Any]] = []
+        api_total = 0
+        was_truncated = False
 
         for table_name in plan.scope.tables:
             sql = f"SELECT * FROM {table_name}"
@@ -469,11 +471,16 @@ class NetSuiteConnector(ConnectorBase):
                 for row_dict in result.rows:
                     all_rows.append([row_dict.get(col) for col in all_column_names])
 
+            # Track if the API reported more rows than we fetched
+            api_total = result.total_results
+            was_truncated = result.has_more
+
         return FactResult(
             column_names=all_column_names,
             column_types=all_column_types,
             rows=all_rows,
-            total_rows_available=len(all_rows),
+            total_rows_available=api_total if api_total else len(all_rows),
+            truncated=was_truncated,
             watermark=datetime.now(),
         )
 

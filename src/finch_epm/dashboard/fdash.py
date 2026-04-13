@@ -238,6 +238,18 @@ def _parse_dashboard(raw: dict[str, Any], source: str) -> DashboardSpec:
     # Parse federation config
     federation = raw.get("federation")
 
+    # Parse v0.5 theming fields (all optional)
+    theme = raw.get("theme")  # string or dict
+    custom_css = raw.get("custom_css")
+    if isinstance(custom_css, str):
+        custom_css = custom_css.strip() or None
+    layout = raw.get("layout")
+    if layout is not None and not isinstance(layout, list):
+        layout = None
+    brand = raw.get("brand")
+    if brand is not None and not isinstance(brand, dict):
+        brand = None
+
     return DashboardSpec(
         name=name,
         description=description,
@@ -250,4 +262,8 @@ def _parse_dashboard(raw: dict[str, Any], source: str) -> DashboardSpec:
         dimensions=dimensions,
         semantic_model=semantic_model,
         federation=federation,
+        theme=theme,
+        custom_css=custom_css,
+        layout=layout,
+        brand=brand,
     )

@@ -22,6 +22,10 @@ from finch_epm.engine.chart_of_accounts import (
     get_revenue_account_types,
     get_expense_account_types,
 )
+from finch_epm.engine.classification_models import (
+    ClassificationStore,
+    DataClass,
+)
 
 
 @dataclass
@@ -58,8 +62,36 @@ class PLEngine:
         report = engine.ytd_pl(year=2024, through_month=6)
     """
 
-    def __init__(self, cache: CacheEngine) -> None:
+    def __init__(
+        self,
+        cache: CacheEngine,
+        classifications: ClassificationStore | None = None,
+        connector_type: str = "netsuite",
+        profile_name: str = "default",
+    ) -> None:
         self._cache = cache
+        self._classifications = classifications
+        self._connector_type = connector_type
+        self._profile_name = profile_name
+
+    def get_account_overrides(self) -> dict[str, str]:
+        """Return account_id -> pl_section mappings from classifications.
+
+        Accounts with an explicit ``pl_section`` in classifications.yaml
+        override the default type-based matching. This lets users route
+        accounts with generic types (e.g., "Expense") to specific
+        sub-sections (e.g., "labor", "overhead").
+        """
+        if not self._classifications:
+            return {}
+        source_key = self._classifications.source_key(
+            self._connector_type, self._profile_name
+        )
+        overrides: dict[str, str] = {}
+        for acct_id, acct_cls in self._classifications.accounts.get(source_key, {}).items():
+            if acct_cls.pl_section:
+                overrides[acct_id] = acct_cls.pl_section
+        return overrides
 
     def monthly_pl(
         self,

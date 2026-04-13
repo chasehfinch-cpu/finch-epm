@@ -24,8 +24,10 @@ _SUITEQL_URL = (
 # Default page size (NetSuite max is 1000 per request)
 _DEFAULT_PAGE_SIZE = 1000
 
-# Maximum total rows per query (NetSuite caps at 100,000)
-_MAX_TOTAL_ROWS = 100_000
+# Safety limit to prevent runaway queries. Set high enough that
+# real datasets complete. A typical GL table is 500K-2M rows.
+# Override per-query via the limit parameter.
+_MAX_TOTAL_ROWS = 10_000_000
 
 # Rate limit retry settings
 _MAX_RETRIES = 5
@@ -69,13 +71,20 @@ class SuiteQLClient:
         *,
         limit: int | None = None,
         page_size: int = _DEFAULT_PAGE_SIZE,
+        progress_callback: Any = None,
     ) -> SuiteQLResult:
         """Execute a SuiteQL query with automatic pagination.
 
+        Paginates through the full result set until the API reports
+        no more rows (``hasMore=false``). There is no artificial row cap
+        — large tables (500K+ rows) are fully fetched.
+
         Args:
             sql: The SuiteQL query string.
-            limit: Maximum total rows to fetch. None = fetch all (up to 100k).
+            limit: Maximum total rows to fetch. None = fetch all rows.
             page_size: Rows per API request (max 1000).
+            progress_callback: Optional ``fn(rows_so_far, total_estimated)``
+                called after each page for progress reporting.
 
         Returns:
             SuiteQLResult with all fetched rows.
@@ -105,6 +114,10 @@ class SuiteQLClient:
             total_results = page.get("totalResults", len(all_rows))
             has_more = page.get("hasMore", False)
             offset += len(page["items"])
+
+            # Report progress
+            if progress_callback and callable(progress_callback):
+                progress_callback(len(all_rows), total_results)
 
             if not page["items"]:
                 break

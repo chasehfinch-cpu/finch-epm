@@ -153,6 +153,53 @@ class DashboardHandler(BaseHTTPRequestHandler):
             ],
             "is_multi_page": spec.is_multi_page,
         }
+
+        # Include theme information
+        try:
+            from finch_epm.dashboard.themes import get_theme
+            from finch_epm.dashboard.themes.css import scope_custom_css, tokens_to_css
+
+            theme_name = spec.theme if isinstance(spec.theme, str) else None
+            theme_tokens = get_theme(theme_name)
+
+            # If theme is a dict, merge overrides
+            if isinstance(spec.theme, dict):
+                from finch_epm.dashboard.themes.tokens import ThemeTokens
+                merged = {**theme_tokens.to_css_vars()}
+                # User can override individual tokens
+                theme_tokens = ThemeTokens.from_dict({
+                    **{k: getattr(theme_tokens, k) for k in ThemeTokens.__dataclass_fields__},
+                    **spec.theme,
+                })
+
+            data["theme_css"] = tokens_to_css(theme_tokens)
+            data["theme_name"] = theme_tokens.name
+            data["chart_colors"] = list(theme_tokens.chart_colors)
+
+            if spec.custom_css:
+                data["custom_css"] = scope_custom_css(spec.custom_css)
+
+            if spec.brand:
+                data["brand"] = spec.brand
+
+            if spec.layout:
+                data["layout"] = spec.layout
+        except Exception:
+            pass  # Theme system not available
+
+        # Include unclassified item count as a dashboard warning
+        try:
+            from finch_epm.engine.classification_models import ClassificationStore
+            cls_store = ClassificationStore.load()
+            pending = cls_store.pending_count()
+            if pending > 0:
+                data["warnings"] = [
+                    f"{pending} data item(s) need classification. "
+                    f"Run 'finch-epm classify' to review."
+                ]
+        except Exception:
+            pass
+
         self._send_json(data)
 
     def _serve_query(self, query_name: str, params: dict | None = None) -> None:
@@ -192,6 +239,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 },
                 "served_from": result.served_from,
             }
+
+            # Pass structured error info for graceful degradation
+            if result.metadata.get("error"):
+                data["error"] = result.metadata["error"]
+                data["error_type"] = result.metadata.get("error_type", "query_error")
+                data["guidance"] = result.metadata.get("guidance", "")
+                data["missing_tables"] = result.metadata.get("missing_tables", [])
+            elif result.metadata.get("missing_tables"):
+                data["error_type"] = "missing_table"
+                data["missing_tables"] = result.metadata["missing_tables"]
+                data["guidance"] = (
+                    "Tables not in your local cache: "
+                    + ", ".join(result.metadata["missing_tables"])
+                    + ". Sync them first or check your permissions."
+                )
 
             # If this query is used by a variance chart, also resolve the comparison
             for chart in spec.charts:

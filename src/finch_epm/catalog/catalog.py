@@ -233,3 +233,22 @@ class CatalogStore:
             [source_name, profile_name],
         ).fetchall()
         return [row[0] for row in rows]
+
+    def get_schema_snapshot(
+        self, source_name: str, profile_name: str
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+        """Capture the current schema state before a full replace.
+
+        Returns:
+            A tuple of (tables, columns_by_table) where tables is the
+            output of ``list_tables()`` and columns_by_table maps each
+            table name to its ``list_columns()`` result.
+        """
+        tables = self.list_tables(source_name, profile_name)
+        columns_by_table: dict[str, list[dict[str, Any]]] = {}
+        for t in tables:
+            tname = t["table_name"]
+            columns_by_table[tname] = self.list_columns(
+                source_name, profile_name, tname
+            )
+        return tables, columns_by_table

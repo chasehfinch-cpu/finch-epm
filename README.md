@@ -6,12 +6,13 @@ finch-epm lets you connect to structured data sources (NetSuite, SQL Server, Pos
 
 ## Current status
 
-v0.1, v0.2, and v0.3 are complete. The tool is functional end-to-end.
+v0.1 through v0.4 are complete. v0.5 is in progress.
 
 **What works today:**
 
 - 7 data source connectors: NetSuite, SQL Server, PostgreSQL, Snowflake, BigQuery, Generic ODBC, and a Fake connector for testing
 - Exhaustive schema introspection (probes all 200+ standard NetSuite record types, INFORMATION_SCHEMA for SQL databases)
+- Full data sync with no artificial row caps (paginates through all data)
 - Local DuckDB catalog that persists schema metadata between sessions
 - Local DuckDB cache with incremental sync, watermark tracking, and atomic cache swap
 - Background sync service with OS task scheduler integration (Windows, macOS, Linux)
@@ -25,19 +26,27 @@ v0.1, v0.2, and v0.3 are complete. The tool is functional end-to-end.
 - CSV and Excel file import for budget, forecast, and reference data
 - Configurable P&L engine with user-defined chart of accounts hierarchy
 - Dimension mapping layer for rollups, hierarchies, and binary flag filters
-- CLI commands: `setup`, `auth`, `catalog`, `sync`, `open`, `import`, `service`
+- Provider-agnostic AI dashboard generation (`finch-epm ask`) with 5 LLM providers
+- MCP server for Claude Desktop, Claude Code, Cursor, and any MCP client
+- Dashboard theming with 7 built-in presets (modern_light, modern_dark, financial, executive, wsj, monospace, terminal)
+- Schema change detection and data classification system
+- Graceful dashboard degradation when shared .fdash files reference missing data
+- User-defined chart of accounts with unlimited hierarchy levels and shareable templates
+- Cross-source table linking for dimension mapping across data sources
+- CLI commands: `setup`, `auth`, `catalog`, `sync`, `open`, `import`, `service`, `ask`, `llm`, `mcp`, `classify`, `coa`, `links`
 - Desktop installer infrastructure (PyInstaller spec, .fdash file association, build script)
 - IT administrator deployment script (PowerShell, pushable via Intune/SCCM/GPO)
 - AI-readable dashboard specification (DASHBOARDS.md) and Claude Code /dashboard command
-- 165 passing tests (125 unit + 40 walkthrough)
-- Complete documentation: README, GETTING_STARTED, DASHBOARDS, CONTRIBUTING, CHANGELOG
+- 356 passing tests
+- Complete documentation: README, GETTING_STARTED, DASHBOARDS, CONTRIBUTING, CHANGELOG, docs/mcp.md
 
-**What is planned for future releases:**
+**What is planned for v0.5 release:**
 
-- Federated query mode (push queries to remote sources instead of caching locally)
-- Multi-source JOINs in a single .fdash query (NetSuite + SQL Server in one SQL statement)
-- Semantic layer for cross-source logical models
-- Community connector library and plugin API
+- Interactive table-linking web UI for drag-and-drop dimension setup
+- Visual overhaul: professional P&L hierarchy rendering (expand/collapse, freeze-pane, variance coloring)
+- On-premises IT governance layer (LAN-based, no cloud)
+- Smart background sync with per-table cadence
+- Git-based team dashboard sharing
 
 ## What it is
 
@@ -228,9 +237,62 @@ DuckDB compresses analytical data well; expect roughly 5-10x compression over ra
 
 **v0.3 (complete).** Snowflake, BigQuery, and Generic ODBC connectors. Custom chart types via Vega-Lite specs. Configurable P&L engine with user-defined chart of accounts. Dimension mapping layer for rollups and flag filters.
 
-**v0.4 (planned).** Multi-source JOINs in a single query. Semantic layer for cross-source logical models. Optional team-shared catalogs. Federated query mode for fast remote backends.
+**v0.4 (complete).** Plugin API for third-party connectors. Table namespacing for multi-source cache. Semantic layer for cross-source logical models. Federated query mode for fast remote backends.
+
+**v0.5 (in progress).** Provider-agnostic AI dashboard generation. MCP server. Visual overhaul with themes. Optional self-hosted IT governance gateway. Smarter background sync. Git-based team collaboration.
 
 The architecture is built so that every item on this roadmap can be added without rewriting the core.
+
+## AI dashboard generation
+
+Any LLM can generate dashboards for you. Configure your preferred provider once, then ask for dashboards in plain English:
+
+```
+finch-epm llm configure            # Pick a provider and enter your API key
+finch-epm ask "build me a site P&L dashboard"
+finch-epm ask "monthly revenue trend by subsidiary" --open
+```
+
+Supported providers: Anthropic (Claude), OpenAI (GPT), Google (Gemini), Ollama (local models), or any OpenAI-compatible endpoint (LM Studio, vLLM, Together, Groq, OpenRouter).
+
+The `ask` command reads your actual data catalog and sample rows, sends them to the LLM as context, and validates the generated `.fdash` file. If validation fails, it automatically feeds the errors back for self-correction. The result is a working dashboard grounded in your real schema.
+
+Configure multiple LLM profiles for different use cases:
+
+```
+finch-epm llm configure --name work       # Anthropic for work
+finch-epm llm configure --name personal   # Local Ollama for personal
+finch-epm ask "expense breakdown" --llm-profile personal
+```
+
+Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`) work too -- no configuration needed if one is set.
+
+## MCP server
+
+finch-epm is a first-class MCP server. Any MCP-capable AI client can connect and get live, grounded access to your data catalog and cache.
+
+Add to Claude Desktop (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "finch-epm": {
+      "command": "finch-epm",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Or for Claude Code:
+
+```
+claude mcp add finch-epm -- finch-epm mcp
+```
+
+The server exposes 10 tools (list tables, describe columns, preview rows, query cache, validate and write dashboards) and 4 resources (the .fdash spec, catalog summaries, themes, and examples). SQL queries are parsed via sqlglot and restricted to read-only SELECT statements.
+
+See `docs/mcp.md` for configuration snippets for Cursor, ChatGPT Desktop, and generic MCP clients.
 
 ## Development
 

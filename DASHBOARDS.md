@@ -596,6 +596,98 @@ charts:
 
 The query data is automatically injected into the Vega-Lite spec as the data source. Any valid Vega-Lite specification works -- see https://vega.github.io/vega-lite/examples/ for the full gallery.
 
+## Theming
+
+Set a theme by name or provide custom token overrides:
+
+```yaml
+theme: financial
+```
+
+Built-in themes: `modern_light` (default), `modern_dark`, `financial`, `financial_terminal`, `executive`, `wsj`, `monospace`.
+
+Override individual tokens:
+
+```yaml
+theme:
+  bg_page: "#1a1a2e"
+  accent: "#ff6600"
+  chart_colors: ["#ff6600", "#0088cc", "#44bb55"]
+  font_family: "'Inter', sans-serif"
+```
+
+Create a fully custom theme by overriding any combination of tokens: colors (bg_page, bg_card, accent, success, danger), typography (font_family, font_size_base), table styles (table_header_bg, table_row_even), P&L hierarchy levels (pl_level1 through pl_level5, pl_ebitda, pl_net_income), KPI cards (kpi_bg, kpi_value_color), and more.
+
+## Brand
+
+Add your company logo and name to dashboard headers and footers:
+
+```yaml
+brand:
+  company_name: Acme Corporation
+  logo: logo.png
+  footer_text: Confidential - Internal Use Only
+```
+
+## Layout
+
+Control chart placement with named rows:
+
+```yaml
+layout:
+  - row: [Total Revenue, Total Expense, Net Income]
+  - row: [Revenue by Site, Expense by Department]
+  - row: [GL Detail Table]
+    width: full
+```
+
+Or use the explicit form for fine-grained control:
+
+```yaml
+layout:
+  - columns:
+      - chart: Revenue Trend
+        width: half
+      - chart: Expense Trend
+        width: half
+  - columns:
+      - chart: Detail Table
+        width: full
+```
+
+Width values: `full`, `half`, `third`, `quarter`.
+
+Dashboards without a `layout` block use the existing auto-flow behavior.
+
+## Markdown narrative blocks
+
+A chart of type `markdown` renders a prose block with optional value substitution:
+
+```yaml
+charts:
+  - type: markdown
+    title: Executive Summary
+    data: totals
+    content: |
+      Total revenue for the period was **{{ totals.revenue }}**.
+      Operating expenses came in at {{ totals.expense }},
+      yielding an EBITDA of {{ totals.ebitda }}.
+```
+
+Placeholders use `{{ query_name.column }}` syntax and pull from the first row of the named query. If the value is missing, "N/A" is substituted.
+
+## Custom CSS
+
+Inject custom CSS scoped to the dashboard:
+
+```yaml
+custom_css: |
+  .card-header { font-size: 16px; }
+  table th { text-transform: uppercase; }
+```
+
+All selectors are automatically scoped under `.fdash-root` so custom styles cannot leak outside the dashboard.
+
 ## Rules for AI dashboard generators
 
 1. The file extension must be `.fdash`.
@@ -614,4 +706,8 @@ The query data is automatically injected into the Vega-Lite spec as the data sou
 14. Pivot tables require `rows` (grouping columns) and `values` (aggregation columns).
 15. Variance tables require `data`, `compare` (second query), `join_on`, and `value` fields.
 16. Custom charts require a `vega_lite` field with a valid Vega-Lite specification object.
-17. Available chart types: bar, line, area, scatter, timeseries, kpi, table, pivot, variance_table, custom.
+17. Available chart types: bar, line, area, scatter, timeseries, kpi, table, pivot, variance_table, custom, markdown.
+18. Use `theme: financial` for P&L dashboards with hierarchical coloring and variance formatting.
+19. Use `brand:` to add company logo and name to headers/footers.
+20. Use `layout:` to control chart placement. Without it, charts auto-flow.
+21. Use `custom_css:` for additional styling (scoped to the dashboard).

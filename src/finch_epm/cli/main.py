@@ -459,6 +459,9 @@ def catalog(
 def _catalog_crawl(connector: str, profile: str) -> None:
     """Run introspection and save results to the catalog."""
     from finch_epm.catalog.catalog import CatalogStore
+    from finch_epm.catalog.change_detector import detect_changes
+    from finch_epm.engine.classification_models import ClassificationStore
+    from finch_epm.engine.classifier import DataClassifier
     from finch_epm.paths import catalog_db_path
 
     click.echo(f"Connecting to {connector}/{profile}...")
@@ -474,6 +477,11 @@ def _catalog_crawl(connector: str, profile: str) -> None:
 
         store = CatalogStore(str(catalog_db_path()))
         try:
+            # Snapshot current state before replacing
+            old_tables, old_columns = store.get_schema_snapshot(
+                schema.source_name, schema.profile_name
+            )
+
             store.save_schema(schema)
             store.save_dimensions(schema.source_name, schema.profile_name, dims)
 
@@ -491,6 +499,45 @@ def _catalog_crawl(connector: str, profile: str) -> None:
             click.echo(f"  Accessible:     {accessible}")
             click.echo(f"  Restricted:     {restricted}")
             click.echo(f"  Dimensions:     {len(dims)}")
+
+            # Detect schema changes
+            if old_tables:  # Skip on first crawl (no previous data)
+                changes = detect_changes(old_tables, old_columns, schema)
+                if changes.has_changes:
+                    click.echo(f"\n  Schema changes detected: {changes.summary()}")
+
+                    # Load classification store and prompt user
+                    cls_store = ClassificationStore.load()
+                    classifier = DataClassifier(cls_store, connector, profile)
+
+                    if changes.new_tables:
+                        click.echo(f"\n  {len(changes.new_tables)} new table(s) need classification:")
+                        classify_now = click.confirm(
+                            "  Classify new items now?", default=True
+                        )
+                        if classify_now:
+                            classified = classifier.classify_new_tables(changes.new_tables)
+                            click.echo(f"  Classified {classified} table(s).")
+                        else:
+                            classifier.add_pending_for_changes(changes)
+                            click.echo(
+                                "  Items saved as pending. "
+                                "Run 'finch-epm classify' later."
+                            )
+
+                    if changes.new_columns:
+                        click.echo(f"\n  {len(changes.new_columns)} new column(s) detected.")
+                        classifier.add_pending_for_changes(changes)
+
+                    if changes.removed_tables:
+                        click.echo(f"\n  {len(changes.removed_tables)} table(s) removed:")
+                        for rt in changes.removed_tables:
+                            click.echo(f"    - {rt.name}")
+
+                    cls_store.save()
+                else:
+                    click.echo("\n  No schema changes since last crawl.")
+
             click.echo(
                 f"\nRun 'finch-epm catalog --tables -c {connector} -p {profile}' "
                 "to browse."
@@ -1100,3 +1147,997 @@ def _setup_linux_cron(interval: int) -> None:
     python_exe = sys.executable
     click.echo(f"  Add to crontab (crontab -e):")
     click.echo(f"  */{interval} * * * * {python_exe} -m finch_epm.cli.main service --once")
+
+
+# ---------------------------------------------------------------------------
+# llm
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+def llm() -> None:
+    """Manage LLM provider configurations for AI dashboard generation."""
+
+
+@llm.command(name="configure")
+@click.option("--name", "-n", default="default", help="LLM profile name")
+def llm_configure(name: str) -> None:
+    """Configure an LLM provider for AI dashboard generation.
+
+    Walks through provider selection and credential setup.
+    Credentials are stored securely in the OS keychain.
+
+        finch-epm llm configure
+        finch-epm llm configure --name work
+    """
+    import os
+
+    from finch_epm.llm.providers import list_provider_names
+    from finch_epm.llm.registry import default_model, list_aliases
+    from finch_epm.profiles.manager import ProfileManager
+
+    providers = list_provider_names()
+    click.echo("Available LLM providers:")
+    for p in providers:
+        click.echo(f"  {p}")
+    click.echo()
+
+    provider = click.prompt(
+        "Provider",
+        type=click.Choice(providers),
+    )
+
+    # Collect credentials
+    api_key = ""
+    base_url = ""
+
+    if provider in ("anthropic", "openai", "google"):
+        env_var_map = {
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "google": "GOOGLE_API_KEY",
+        }
+        env_var = env_var_map[provider]
+        existing = os.environ.get(env_var, "")
+        if existing:
+            use_env = click.confirm(
+                f"Found {env_var} in environment. Use it?", default=True
+            )
+            if use_env:
+                api_key = existing
+        if not api_key:
+            api_key = click.prompt("API key", hide_input=True)
+
+    elif provider == "ollama":
+        base_url = click.prompt(
+            "Ollama URL", default="http://localhost:11434"
+        )
+
+    elif provider == "openai_compatible":
+        base_url = click.prompt("Base URL (e.g. http://localhost:1234/v1)")
+        api_key = click.prompt("API key (blank if none)", default="", show_default=False)
+
+    # Model selection
+    aliases = list_aliases(provider)
+    default = default_model(provider)
+    click.echo()
+    click.echo("Model aliases:")
+    for alias, model_id in aliases.items():
+        marker = " (default)" if model_id == default else ""
+        click.echo(f"  {alias:<12} -> {model_id}{marker}")
+    click.echo()
+    model = click.prompt("Model (alias or ID)", default="balanced")
+
+    # Save
+    pm = ProfileManager()
+    config = {"provider": provider, "model": model}
+    if base_url:
+        config["base_url"] = base_url
+    pm.set_config("llm", name, config)
+    if api_key:
+        pm.set_secret("llm", name, "api_key", api_key)
+
+    click.echo(f"\nLLM profile '{name}' saved ({provider}, model: {model})")
+    click.echo(f"Test with: finch-epm llm test --name {name}")
+
+
+@llm.command(name="list")
+def llm_list() -> None:
+    """List all configured LLM profiles.
+
+        finch-epm llm list
+    """
+    from finch_epm.profiles.manager import ProfileManager
+
+    pm = ProfileManager()
+    profiles = pm.list_profiles(connector_type="llm")
+    if not profiles:
+        click.echo("No LLM profiles configured.")
+        click.echo("Run: finch-epm llm configure")
+        return
+
+    click.echo(f"{'Name':<20} {'Provider':<18} {'Model':<30}")
+    click.echo("-" * 70)
+    for _, profile_name in profiles:
+        try:
+            config = pm.get_config("llm", profile_name)
+            click.echo(
+                f"{profile_name:<20} {config.get('provider', '?'):<18} "
+                f"{config.get('model', 'default'):<30}"
+            )
+        except KeyError:
+            click.echo(f"{profile_name:<20} (error reading config)")
+
+
+@llm.command(name="test")
+@click.option("--name", "-n", default="default", help="LLM profile name")
+def llm_test(name: str) -> None:
+    """Test the connection to a configured LLM provider.
+
+        finch-epm llm test
+        finch-epm llm test --name work
+    """
+    provider = _make_llm_provider(name)
+    info = provider.describe()
+    click.echo(f"Testing {info['provider']} (model: {info.get('model', '?')})...")
+
+    try:
+        provider.test_connection()
+        click.echo("Connection successful.")
+    except Exception as e:
+        click.echo(f"Connection failed: {e}")
+        raise SystemExit(1)
+
+
+def _make_llm_provider(profile_name: str = "default") -> "Provider":
+    """Create an LLM Provider from a named profile.
+
+    Checks environment variables first, then falls back to keyring.
+    """
+    import os
+
+    from finch_epm.llm.base import LLMError, Provider
+    from finch_epm.llm.providers import get_provider_class
+    from finch_epm.profiles.manager import ProfileManager
+
+    pm = ProfileManager()
+
+    # Try to load saved profile
+    try:
+        config = pm.get_config("llm", profile_name)
+    except KeyError:
+        # No saved profile -- try environment variables
+        for env_var, provider_name in [
+            ("ANTHROPIC_API_KEY", "anthropic"),
+            ("OPENAI_API_KEY", "openai"),
+            ("GOOGLE_API_KEY", "google"),
+        ]:
+            key = os.environ.get(env_var, "")
+            if key:
+                cls = get_provider_class(provider_name)
+                return cls(api_key=key)
+
+        raise click.ClickException(
+            f"LLM profile '{profile_name}' not found and no API key "
+            "environment variables set.\n"
+            "Run: finch-epm llm configure\n"
+            "Or set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY"
+        )
+
+    provider_name = config["provider"]
+    model = config.get("model")
+    base_url = config.get("base_url", "")
+    api_key = pm.get_secret("llm", profile_name, "api_key") or ""
+
+    # Also check env vars as fallback for the key
+    if not api_key:
+        env_map = {
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "google": "GOOGLE_API_KEY",
+        }
+        env_var = env_map.get(provider_name, "")
+        if env_var:
+            api_key = os.environ.get(env_var, "")
+
+    cls = get_provider_class(provider_name)
+
+    kwargs: dict = {}
+    if api_key:
+        kwargs["api_key"] = api_key
+    if model:
+        kwargs["model"] = model
+    if base_url:
+        kwargs["base_url"] = base_url
+
+    return cls(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# ask
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("prompt")
+@click.option("--connector", "-c", help="Connector type for catalog scope")
+@click.option("--profile", "-p", help="Data profile name for catalog scope")
+@click.option("--llm-profile", default="default", help="LLM profile name")
+@click.option("--provider", "provider_override", help="Override LLM provider")
+@click.option("--model", "model_override", help="Override LLM model")
+@click.option(
+    "--output", "-o",
+    type=click.Path(),
+    help="Output path (default: ./generated/<slug>.fdash)",
+)
+@click.option("--open", "auto_open", is_flag=True, help="Open dashboard after generation")
+@click.option("--dry-run", is_flag=True, help="Print to stdout instead of writing a file")
+@click.option("--max-retries", default=2, help="Max self-correction attempts")
+def ask(
+    prompt: str,
+    connector: str | None,
+    profile: str | None,
+    llm_profile: str,
+    provider_override: str | None,
+    model_override: str | None,
+    output: str | None,
+    auto_open: bool,
+    dry_run: bool,
+    max_retries: int,
+) -> None:
+    """Generate a dashboard from a natural language prompt.
+
+    Uses your configured LLM to create a .fdash file grounded in your
+    actual data catalog.
+
+        finch-epm ask "build me a site P&L dashboard"
+        finch-epm ask "monthly revenue trend by subsidiary" -c netsuite -p production
+        finch-epm ask "top 10 customers by revenue" --open
+        finch-epm ask "expense breakdown" --dry-run
+    """
+    import re as _re
+
+    from finch_epm.cache.local import LocalCacheEngine
+    from finch_epm.catalog.catalog import CatalogStore
+    from finch_epm.llm.ask import ask_llm
+    from finch_epm.llm.prompt import build_system_prompt
+    from finch_epm.paths import cache_db_path, catalog_db_path
+    from finch_epm.profiles.manager import ProfileManager
+
+    # Build provider
+    if provider_override:
+        from finch_epm.llm.providers import get_provider_class
+        import os
+        cls = get_provider_class(provider_override)
+        env_map = {
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "google": "GOOGLE_API_KEY",
+        }
+        api_key = os.environ.get(env_map.get(provider_override, ""), "")
+        kwargs: dict = {}
+        if api_key:
+            kwargs["api_key"] = api_key
+        if model_override:
+            kwargs["model"] = model_override
+        llm_provider = cls(**kwargs)
+    else:
+        llm_provider = _make_llm_provider(llm_profile)
+
+    # Determine which profiles to include in the catalog
+    pm = ProfileManager()
+    if connector and profile:
+        profiles = [(connector, profile)]
+    else:
+        # Include all data profiles (excluding "llm")
+        profiles = [
+            (ct, pn) for ct, pn in pm.list_profiles()
+            if ct != "llm"
+        ]
+
+    if not profiles:
+        click.echo(
+            "No data profiles configured. Run 'finch-epm setup' or "
+            "'finch-epm auth' first to connect a data source."
+        )
+        raise SystemExit(1)
+
+    click.echo(f"Building catalog context from {len(profiles)} profile(s)...")
+
+    catalog = CatalogStore(str(catalog_db_path()))
+    try:
+        cache = LocalCacheEngine(str(cache_db_path()), read_only=True)
+    except Exception:
+        click.echo("Warning: Cache not available. Generating without sample rows.")
+        cache = None
+
+    try:
+        system_prompt = build_system_prompt(
+            catalog, cache, profiles
+        ) if cache else build_system_prompt(catalog, None, profiles)
+
+        click.echo(f"Generating dashboard with {llm_provider.describe()['provider']}...")
+
+        result = ask_llm(
+            prompt=prompt,
+            provider=llm_provider,
+            system_prompt=system_prompt,
+            model=model_override,
+            max_retries=max_retries,
+        )
+
+        if not result.success:
+            click.echo(f"\nDashboard generation failed after {result.attempts} attempt(s).")
+            for err in result.errors:
+                click.echo(f"  {err}")
+            raise SystemExit(1)
+
+        click.echo(f"Dashboard generated successfully (attempt {result.attempts}/{max_retries + 1})")
+
+        if dry_run:
+            click.echo("\n--- Generated .fdash ---")
+            click.echo(result.fdash_content)
+            return
+
+        # Determine output path
+        if output:
+            out_path = Path(output)
+        else:
+            # Generate path from dashboard name
+            name = result.spec.name if result.spec else "dashboard"
+            slug = _re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+            out_dir = Path("generated")
+            out_dir.mkdir(exist_ok=True)
+            out_path = out_dir / f"{slug}.fdash"
+
+        out_path.write_text(result.fdash_content, encoding="utf-8")
+        click.echo(f"Saved to: {out_path}")
+
+        if auto_open:
+            click.echo("Opening dashboard...")
+            ctx = click.get_current_context()
+            ctx.invoke(open_dashboard, dashboard=str(out_path), port=8765, no_browser=False)
+
+    finally:
+        catalog.close()
+        if cache:
+            cache.close()
+
+
+# ---------------------------------------------------------------------------
+# classify
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.option("--connector", "-c", help="Connector type (filter to one source)")
+@click.option("--profile", "-p", help="Profile name (filter to one source)")
+@click.option("--accounts", is_flag=True, help="Classify unmapped GL accounts against the P&L structure")
+def classify(connector: str | None, profile: str | None, accounts: bool) -> None:
+    """Review and classify unclassified data items.
+
+    After a catalog crawl detects new tables, columns, or accounts,
+    this command lets you classify them so dashboards and the P&L
+    engine know what the data represents.
+
+        finch-epm classify                        # Review all pending items
+        finch-epm classify --accounts -c netsuite -p production  # Classify GL accounts
+    """
+    from finch_epm.engine.classification_models import ClassificationStore, DataClass
+    from finch_epm.engine.classifier import DataClassifier
+
+    cls_store = ClassificationStore.load()
+
+    if accounts:
+        if not connector or not profile:
+            click.echo("Error: --accounts requires --connector and --profile.")
+            raise SystemExit(1)
+        _classify_accounts(cls_store, connector, profile)
+        return
+
+    # Show pending items
+    pending = cls_store.pending
+    if not pending:
+        click.echo("No items pending classification.")
+        total_classified = sum(
+            len(tables) for tables in cls_store.tables.values()
+        )
+        if total_classified:
+            click.echo(f"({total_classified} items previously classified)")
+        return
+
+    # Filter by source if specified
+    if connector and profile:
+        source_key = cls_store.source_key(connector, profile)
+        pending = [p for p in pending if p.source == source_key]
+        if not pending:
+            click.echo(f"No pending items for {connector}/{profile}.")
+            return
+
+    click.echo(f"\n  {len(pending)} item(s) pending classification:\n")
+
+    # Group by source
+    by_source: dict[str, list] = {}
+    for p in pending:
+        by_source.setdefault(p.source, []).append(p)
+
+    for source, items in sorted(by_source.items()):
+        click.echo(f"  Source: {source}")
+        parts = source.split("/", 1)
+        ct = parts[0]
+        pn = parts[1] if len(parts) > 1 else parts[0]
+
+        classifier = DataClassifier(cls_store, ct, pn)
+
+        # Separate tables and columns
+        table_items = [i for i in items if i.item_type == "table"]
+        column_items = [i for i in items if i.item_type == "column"]
+        account_items = [i for i in items if i.item_type == "account"]
+
+        if table_items:
+            click.echo(f"    {len(table_items)} new table(s)")
+        if column_items:
+            click.echo(f"    {len(column_items)} new column(s)")
+        if account_items:
+            click.echo(f"    {len(account_items)} unmapped account(s)")
+
+    click.echo()
+    do_classify = click.confirm("  Classify these items now?", default=True)
+    if not do_classify:
+        click.echo("  Run 'finch-epm classify' when ready.")
+        return
+
+    for source, items in sorted(by_source.items()):
+        parts = source.split("/", 1)
+        ct = parts[0]
+        pn = parts[1] if len(parts) > 1 else parts[0]
+        classifier = DataClassifier(cls_store, ct, pn)
+
+        from finch_epm.catalog.change_detector import NewTable, NewColumn
+
+        table_items = [i for i in items if i.item_type == "table"]
+        if table_items:
+            new_tables = [
+                NewTable(
+                    name=i.identifier,
+                    display_name=i.display_name or i.identifier,
+                    column_count=0,
+                )
+                for i in table_items
+            ]
+            classifier.classify_new_tables(new_tables)
+
+        column_items = [i for i in items if i.item_type == "column"]
+        if column_items:
+            new_columns = []
+            for i in column_items:
+                parts_col = i.identifier.split(".", 1)
+                tname = parts_col[0] if len(parts_col) > 1 else ""
+                cname = parts_col[1] if len(parts_col) > 1 else i.identifier
+                new_columns.append(NewColumn(
+                    table_name=tname,
+                    column_name=cname,
+                    column_type="",
+                ))
+            classifier.classify_new_columns(new_columns)
+
+    cls_store.save()
+    remaining = cls_store.pending_count()
+    click.echo(f"\n  Classification saved. {remaining} item(s) still pending.")
+
+
+def _classify_accounts(
+    cls_store: "ClassificationStore",
+    connector: str,
+    profile: str,
+) -> None:
+    """Classify unmapped GL accounts against the active P&L structure."""
+    from finch_epm.cache.local import LocalCacheEngine
+    from finch_epm.cache.models import QueryRequest
+    from finch_epm.catalog.change_detector import detect_unmapped_accounts, flatten_pl_sections
+    from finch_epm.engine.chart_of_accounts import get_default_pl_structure
+    from finch_epm.engine.classifier import DataClassifier
+    from finch_epm.paths import cache_db_path
+
+    pl_structure = get_default_pl_structure()
+    flat_sections = flatten_pl_sections(pl_structure)
+
+    # Get already-classified account IDs
+    source_key = cls_store.source_key(connector, profile)
+    classified_ids = set(cls_store.accounts.get(source_key, {}).keys())
+
+    # Query the cached Account table for all accounts
+    try:
+        cache = LocalCacheEngine(str(cache_db_path()), read_only=True)
+    except Exception:
+        click.echo("Error: Cache not available. Sync data first.")
+        raise SystemExit(1)
+
+    try:
+        # Try common account table names
+        account_rows: list[dict] = []
+        for table_name in ["Account", "ns__Account", "account"]:
+            try:
+                result = cache.execute_query(QueryRequest(
+                    sql=f'SELECT * FROM "{table_name}"',
+                    parameters={},
+                    source_name="",
+                ))
+                for row in result.rows:
+                    account_rows.append(dict(zip(result.column_names, row)))
+                break
+            except Exception:
+                continue
+
+        if not account_rows:
+            click.echo("No Account table found in cache. Sync accounts first:")
+            click.echo(f"  finch-epm sync -c {connector} -p {profile} -t Account")
+            raise SystemExit(1)
+
+        click.echo(f"  Found {len(account_rows)} accounts in cache.")
+
+        unmapped = detect_unmapped_accounts(
+            account_rows, flat_sections, classified_ids
+        )
+
+        if not unmapped:
+            click.echo("  All accounts are mapped to a P&L section.")
+            return
+
+        click.echo(f"  {len(unmapped)} account(s) don't map to any P&L section.")
+        do_classify = click.confirm("  Classify them now?", default=True)
+        if not do_classify:
+            click.echo("  Run 'finch-epm classify --accounts' when ready.")
+            return
+
+        classifier = DataClassifier(cls_store, connector, profile)
+        classified = classifier.classify_unmapped_accounts(unmapped, pl_structure)
+        cls_store.save()
+        click.echo(f"\n  Classified {classified} account(s).")
+
+    finally:
+        cache.close()
+
+
+# ---------------------------------------------------------------------------
+# mcp
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.option(
+    "--transport", "-t",
+    type=click.Choice(["stdio", "sse"]),
+    default="stdio",
+    help="Transport mode: stdio (default, for desktop MCP clients) or sse (HTTP)",
+)
+@click.option("--port", default=8808, help="HTTP port (only used with --transport sse)")
+def mcp(transport: str, port: int) -> None:
+    """Run the finch-epm MCP server.
+
+    Desktop MCP clients (Claude Desktop, Claude Code, Cursor) connect
+    via stdio. Use --transport sse for HTTP-based clients.
+
+    Stdio (default):
+
+        finch-epm mcp
+
+    HTTP:
+
+        finch-epm mcp --transport sse --port 8808
+    """
+    from finch_epm.mcp.server import create_mcp_server
+
+    server = create_mcp_server()
+
+    if transport == "sse":
+        click.echo(f"Starting MCP server on http://localhost:{port}")
+        server.settings.port = port
+        server.run(transport="sse")
+    else:
+        server.run(transport="stdio")
+
+
+# ---------------------------------------------------------------------------
+# coa (chart of accounts)
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+def coa() -> None:
+    """Manage the chart of accounts for P&L reporting."""
+
+
+@coa.command(name="setup")
+@click.option("--connector", "-c", help="Connector type")
+@click.option("--profile", "-p", help="Profile name")
+def coa_setup(connector: str | None, profile: str | None) -> None:
+    """Interactive chart of accounts setup.
+
+    Auto-generates a P&L hierarchy from your account data, or import
+    a template from a file your team has already created.
+
+        finch-epm coa setup -c netsuite -p production
+    """
+    from finch_epm.cache.local import LocalCacheEngine
+    from finch_epm.cache.models import QueryRequest
+    from finch_epm.engine.coa import ChartOfAccounts
+    from finch_epm.paths import cache_db_path
+
+    click.echo("\n  Chart of Accounts Setup")
+    click.echo("  " + "=" * 50)
+
+    # Try to load accounts from cache
+    try:
+        cache = LocalCacheEngine(str(cache_db_path()), read_only=True)
+    except Exception:
+        click.echo("  Cache not available. Sync data first.")
+        raise SystemExit(1)
+
+    try:
+        account_rows: list[dict] = []
+        for table in ["Account", "ns__Account", "account"]:
+            try:
+                result = cache.execute_query(QueryRequest(sql=f'SELECT * FROM "{table}"'))
+                for row in result.rows:
+                    account_rows.append(dict(zip(result.column_names, row)))
+                break
+            except Exception:
+                continue
+
+        if account_rows:
+            click.echo(f"  Found {len(account_rows)} accounts in cache.\n")
+        else:
+            click.echo("  No Account table found. Sync accounts first.")
+            raise SystemExit(1)
+
+        # Count by type
+        type_counts: dict[str, int] = {}
+        for r in account_rows:
+            t = str(r.get("accttype", "unknown"))
+            type_counts[t] = type_counts.get(t, 0) + 1
+        click.echo("  Account types:")
+        for t, c in sorted(type_counts.items(), key=lambda x: -x[1]):
+            click.echo(f"    {t}: {c}")
+
+        click.echo("\n  Options:")
+        click.echo("    1. Auto-generate P&L structure from account types (recommended)")
+        click.echo("    2. Import from file (YAML, JSON, or CSV template)")
+        click.echo("    3. Skip for now")
+
+        choice = click.prompt("  Choice", type=int, default=1)
+
+        if choice == 1:
+            click.echo()
+            level_count = click.prompt(
+                "  How many hierarchy levels? (2-6)", type=int, default=4
+            )
+            level_names = [f"level{i}" for i in range(1, level_count + 1)]
+            coa_obj = ChartOfAccounts.from_accounts(account_rows, level_names=level_names)
+            path = coa_obj.save()
+            counts = coa_obj.count_by_category()
+            click.echo(f"\n  Generated chart of accounts:")
+            for cat, count in sorted(counts.items()):
+                click.echo(f"    {cat}: {count} accounts")
+            click.echo(f"\n  Saved to: {path}")
+            click.echo(f"  Customize with: finch-epm coa edit")
+
+        elif choice == 2:
+            file_path = click.prompt("  Path to template file")
+            p = Path(file_path)
+            if not p.exists():
+                click.echo(f"  File not found: {p}")
+                raise SystemExit(1)
+            if p.suffix == ".json":
+                coa_obj = ChartOfAccounts.from_json(p)
+            elif p.suffix == ".csv":
+                coa_obj = ChartOfAccounts.from_csv(p)
+            else:
+                coa_obj = ChartOfAccounts.load(p)
+            path = coa_obj.save()
+            click.echo(f"  Imported {len(coa_obj.accounts)} accounts from {p.name}")
+            click.echo(f"  Saved to: {path}")
+
+        else:
+            click.echo("  Skipped. Run 'finch-epm coa setup' when ready.")
+
+    finally:
+        cache.close()
+
+
+@coa.command(name="import")
+@click.argument("file_path", type=click.Path(exists=True))
+def coa_import(file_path: str) -> None:
+    """Import a chart of accounts from a template file.
+
+    Supports YAML, JSON, and CSV formats. Share templates with your team
+    so everyone uses the same P&L structure.
+
+        finch-epm coa import template.yaml
+        finch-epm coa import team_coa.json
+        finch-epm coa import accounts.csv
+    """
+    from finch_epm.engine.coa import ChartOfAccounts
+
+    p = Path(file_path)
+    if p.suffix == ".json":
+        coa_obj = ChartOfAccounts.from_json(p)
+    elif p.suffix == ".csv":
+        coa_obj = ChartOfAccounts.from_csv(p)
+    else:
+        coa_obj = ChartOfAccounts.load(p)
+
+    path = coa_obj.save()
+    counts = coa_obj.count_by_category()
+    click.echo(f"Imported {len(coa_obj.accounts)} accounts from {p.name}")
+    for cat, count in sorted(counts.items()):
+        click.echo(f"  {cat}: {count}")
+    click.echo(f"Saved to: {path}")
+
+
+@coa.command(name="show")
+def coa_show() -> None:
+    """Show the current chart of accounts hierarchy.
+
+        finch-epm coa show
+    """
+    from finch_epm.engine.coa import ChartOfAccounts
+
+    coa_obj = ChartOfAccounts.load()
+    if not coa_obj.accounts:
+        click.echo("No chart of accounts configured.")
+        click.echo("Run: finch-epm coa setup")
+        return
+
+    click.echo(f"Chart of Accounts ({len(coa_obj.accounts)} accounts)")
+    click.echo(f"Levels: {', '.join(coa_obj.level_names)}")
+    click.echo()
+
+    counts = coa_obj.count_by_category()
+    for cat, count in sorted(counts.items()):
+        click.echo(f"  {cat}: {count} accounts")
+
+    unmapped = coa_obj.find_unmapped()
+    if unmapped:
+        click.echo(f"\n  {len(unmapped)} accounts not yet classified.")
+        click.echo("  Run: finch-epm coa setup  (to reclassify)")
+
+
+@coa.command(name="edit")
+def coa_edit() -> None:
+    """Open the chart of accounts in your system editor.
+
+        finch-epm coa edit
+    """
+    import os
+    import subprocess
+    import sys
+
+    from finch_epm.engine.coa import ChartOfAccounts, _default_path
+
+    path = _default_path()
+    if not path.exists():
+        click.echo("No chart of accounts found. Run 'finch-epm coa setup' first.")
+        raise SystemExit(1)
+
+    click.echo(f"Opening: {path}")
+    if sys.platform == "win32":
+        os.startfile(str(path))
+    elif sys.platform == "darwin":
+        subprocess.run(["open", str(path)])
+    else:
+        editor = os.environ.get("EDITOR", "nano")
+        subprocess.run([editor, str(path)])
+
+
+@coa.command(name="unmapped")
+def coa_unmapped() -> None:
+    """Show accounts not yet classified in the P&L hierarchy.
+
+        finch-epm coa unmapped
+    """
+    from finch_epm.engine.coa import ChartOfAccounts
+
+    coa_obj = ChartOfAccounts.load()
+    if not coa_obj.accounts:
+        click.echo("No chart of accounts configured. Run: finch-epm coa setup")
+        return
+
+    unmapped = coa_obj.find_unmapped()
+    if not unmapped:
+        click.echo("All accounts are classified.")
+        return
+
+    click.echo(f"{len(unmapped)} unclassified accounts:\n")
+    click.echo(f"  {'ID':<10} {'Name':<40} {'Category'}")
+    click.echo("  " + "-" * 65)
+    for acct in unmapped[:50]:
+        click.echo(f"  {acct.account_id:<10} {acct.account_name[:40]:<40} {acct.category}")
+    if len(unmapped) > 50:
+        click.echo(f"\n  ... and {len(unmapped) - 50} more.")
+    click.echo(f"\nEdit the COA file to classify them: finch-epm coa edit")
+
+
+# ---------------------------------------------------------------------------
+# links (table linking)
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+def links() -> None:
+    """Manage cross-source table links and dimension mappings."""
+
+
+@links.command(name="setup")
+def links_setup() -> None:
+    """Interactive setup for linking tables across data sources.
+
+    Detects dimension tables and helps you connect columns across
+    NetSuite, SQL Server, and other sources.
+
+        finch-epm links setup
+    """
+    from finch_epm.cache.local import LocalCacheEngine
+    from finch_epm.cache.models import QueryRequest
+    from finch_epm.catalog.catalog import CatalogStore
+    from finch_epm.engine.table_linker import TableLinker
+    from finch_epm.paths import cache_db_path, catalog_db_path
+    from finch_epm.profiles.manager import ProfileManager
+
+    click.echo("\n  Table Linking Setup")
+    click.echo("  " + "=" * 50)
+    click.echo("  Link tables across data sources so dashboards can")
+    click.echo("  JOIN NetSuite and SQL Server data together.\n")
+
+    cache = LocalCacheEngine(str(cache_db_path()), read_only=True)
+    catalog = CatalogStore(str(catalog_db_path()))
+    linker = TableLinker.load()
+
+    try:
+        # List all cached tables with row counts
+        r = cache.execute_query(QueryRequest(
+            sql="""SELECT table_name FROM information_schema.tables
+                   WHERE table_schema='main' AND table_name NOT LIKE '\\_%' ESCAPE '\\'
+                   ORDER BY table_name"""
+        ))
+        tables = []
+        for row in r.rows:
+            tname = row[0]
+            try:
+                cnt = cache.execute_query(QueryRequest(sql=f'SELECT COUNT(*) FROM "{tname}"'))
+                tables.append({"table_name": tname, "row_count": cnt.rows[0][0]})
+            except Exception:
+                tables.append({"table_name": tname, "row_count": 0})
+
+        # Identify dimension candidates (small tables)
+        dim_candidates = TableLinker.detect_dimension_tables(tables)
+        fact_tables = [t for t in tables if t["row_count"] > 5000]
+
+        if dim_candidates:
+            click.echo("  Detected reference/dimension tables (small row count):")
+            for i, t in enumerate(dim_candidates, 1):
+                click.echo(f"    {i}. {t['table_name']} ({t['row_count']:,} rows)")
+
+        if fact_tables:
+            click.echo(f"\n  Fact/transaction tables (large):")
+            for t in fact_tables:
+                click.echo(f"    {t['table_name']} ({t['row_count']:,} rows)")
+
+        click.echo("\n  To link two tables, I need to know which columns match.")
+        click.echo("  Example: Location.id  <-->  dbo__RCMSiteMaster.Division\n")
+
+        while True:
+            add_link = click.confirm("  Add a table link?", default=bool(dim_candidates))
+            if not add_link:
+                break
+
+            # Pick source table
+            all_table_names = [t["table_name"] for t in tables]
+            click.echo("\n  Available tables:")
+            for i, name in enumerate(all_table_names, 1):
+                click.echo(f"    {i}. {name}")
+
+            src_idx = click.prompt("  Source table number", type=int) - 1
+            src_table = all_table_names[src_idx]
+
+            # Show source columns
+            src_cols = cache.execute_query(QueryRequest(
+                sql=f"SELECT column_name FROM information_schema.columns WHERE table_name='{src_table}' ORDER BY ordinal_position"
+            ))
+            src_col_names = [r[0] for r in src_cols.rows]
+            click.echo(f"\n  Columns in {src_table}:")
+            for i, c in enumerate(src_col_names, 1):
+                click.echo(f"    {i}. {c}")
+            src_col_idx = click.prompt("  Source column number", type=int) - 1
+            src_col = src_col_names[src_col_idx]
+
+            # Pick target table
+            tgt_idx = click.prompt("  Target table number", type=int) - 1
+            tgt_table = all_table_names[tgt_idx]
+
+            # Show target columns
+            tgt_cols = cache.execute_query(QueryRequest(
+                sql=f"SELECT column_name FROM information_schema.columns WHERE table_name='{tgt_table}' ORDER BY ordinal_position"
+            ))
+            tgt_col_names = [r[0] for r in tgt_cols.rows]
+
+            # Auto-suggest matches
+            src_col_dicts = [{"column_name": c} for c in src_col_names]
+            tgt_col_dicts = [{"column_name": c} for c in tgt_col_names]
+            suggestions = TableLinker.detect_linkable_columns(src_col_dicts, tgt_col_dicts)
+
+            if suggestions:
+                click.echo(f"\n  Suggested matches:")
+                for s in suggestions[:5]:
+                    click.echo(f"    {src_table}.{s['source_column']} <-> {tgt_table}.{s['target_column']} ({s['confidence']})")
+
+            click.echo(f"\n  Columns in {tgt_table}:")
+            for i, c in enumerate(tgt_col_names, 1):
+                click.echo(f"    {i}. {c}")
+            tgt_col_idx = click.prompt("  Target column number", type=int) - 1
+            tgt_col = tgt_col_names[tgt_col_idx]
+
+            link = linker.add_link(src_table, src_col, tgt_table, tgt_col)
+            click.echo(f"\n  Linked: {src_table}.{src_col} <-> {tgt_table}.{tgt_col}")
+
+        path = linker.save()
+        click.echo(f"\n  Saved {len(linker.links)} link(s) to: {path}")
+
+    finally:
+        cache.close()
+        catalog.close()
+
+
+@links.command(name="show")
+def links_show() -> None:
+    """Show all configured table links.
+
+        finch-epm links show
+    """
+    from finch_epm.engine.table_linker import TableLinker
+
+    linker = TableLinker.load()
+    if not linker.links and not linker.dimensions:
+        click.echo("No table links configured. Run: finch-epm links setup")
+        return
+
+    if linker.links:
+        click.echo(f"Table Links ({len(linker.links)}):\n")
+        for link in linker.links:
+            click.echo(f"  {link.source_table}.{link.source_column} <-> {link.target_table}.{link.target_column}")
+            if link.description:
+                click.echo(f"    {link.description}")
+
+    if linker.dimensions:
+        click.echo(f"\nDimension Mappings ({len(linker.dimensions)}):\n")
+        for dim in linker.dimensions:
+            click.echo(f"  {dim.name}: {dim.dimension_table} (join on {dim.fact_join_column})")
+            if dim.rollup_columns:
+                click.echo(f"    Rollups: {', '.join(dim.rollup_columns)}")
+
+
+@links.command(name="import")
+@click.argument("file_path", type=click.Path(exists=True))
+def links_import(file_path: str) -> None:
+    """Import table links from a shared YAML file.
+
+        finch-epm links import team_links.yaml
+    """
+    from finch_epm.engine.table_linker import TableLinker
+
+    imported = TableLinker.load(file_path)
+    # Merge with existing
+    existing = TableLinker.load()
+    for link in imported.links:
+        existing.add_link(
+            link.source_table, link.source_column,
+            link.target_table, link.target_column,
+            name=link.name, description=link.description,
+        )
+    for dim in imported.dimensions:
+        existing.dimensions = [d for d in existing.dimensions if d.name != dim.name]
+        existing.dimensions.append(dim)
+
+    path = existing.save()
+    click.echo(f"Imported {len(imported.links)} link(s) and {len(imported.dimensions)} dimension(s)")
+    click.echo(f"Saved to: {path}")

@@ -130,6 +130,16 @@ class DashboardSpec:
     semantic_model: str | None = None
     federation: dict[str, Any] | None = None
 
+    # v0.5 fields (all optional, backward compatible)
+    theme: str | dict[str, Any] | None = None
+    """Theme name (string) or inline token overrides (dict)."""
+    custom_css: str | None = None
+    """Raw CSS injected into a scoped <style> tag."""
+    layout: list[dict[str, Any]] | None = None
+    """Layout definition: rows with chart placements."""
+    brand: dict[str, Any] | None = None
+    """Brand block: logo, company_name, footer_text."""
+
     @property
     def is_multi_page(self) -> bool:
         """True if this dashboard uses the pages/tabs format."""

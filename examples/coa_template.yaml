@@ -1,0 +1,147 @@
+# finch-epm Chart of Accounts Template
+#
+# This is a starting template for your P&L hierarchy. Customize it to
+# match your company's reporting structure. Share it with team members
+# so everyone uses the same P&L format.
+#
+# Each account maps to a series of rollup levels (level1 through levelN).
+# Level1 is the finest detail; the highest level is the section total.
+# You can add as many levels as you need.
+#
+# Import this template:  finch-epm coa import coa_template.yaml
+# Or auto-generate:      finch-epm coa setup
+#
+# Categories:
+#   revenue          - P&L revenue (sign is flipped so it shows positive)
+#   expense          - P&L expense
+#   below-the-line   - Post-EBITDA adjustments (management fees, interest, etc.)
+#   statistical      - Non-financial metrics (hours, volumes, headcount)
+#   undetermined     - Not yet classified
+
+version: 1
+level_names: [level1, level2, level3, level4]
+metadata:
+  template_name: Default P&L Template
+  description: Standard 4-level P&L structure for NetSuite account types
+
+accounts:
+  # === REVENUE ===
+  "4000":
+    name: Patient Revenue
+    level1: Net Patient Revenue
+    level2: Net Patient Revenue
+    level3: Net Revenue
+    level4: Total Revenue
+    category: revenue
+
+  "4100":
+    name: Hospital Subsidy Revenue
+    level1: Hospital Subsidy Revenue
+    level2: Hospital Subsidy Revenue
+    level3: Net Revenue
+    level4: Total Revenue
+    category: revenue
+
+  "4200":
+    name: Hospital Billed Revenue
+    level1: Hospital Billed Revenue
+    level2: Hospital Billed Revenue
+    level3: Net Revenue
+    level4: Total Revenue
+    category: revenue
+
+  "4400":
+    name: Management Fee Revenue
+    level1: Management Fee Revenue
+    level2: Management Fee Revenue
+    level3: Management Fee Revenue
+    level4: Total Revenue
+    category: revenue
+
+  # === DIRECT LABOR ===
+  "5100":
+    name: Non-Employed Physician Compensation
+    level1: Total Non-Employed Physician Salaries
+    level2: Total MD Comp
+    level3: Direct Labor
+    level4: Total Expense
+    category: expense
+
+  "5200":
+    name: Employed Physician Compensation
+    level1: Total Employed Physician Salaries
+    level2: Total MD Comp
+    level3: Direct Labor
+    level4: Total Expense
+    category: expense
+
+  "5300":
+    name: APP Compensation
+    level1: Total APP Salaries
+    level2: Total APP Comp
+    level3: Direct Labor
+    level4: Total Expense
+    category: expense
+
+  # === OPERATING EXPENSES ===
+  "6000":
+    name: Professional Fees
+    level1: Professional Fees
+    level2: Professional Services
+    level3: Operating Expenses
+    level4: Total Expense
+    category: expense
+
+  "6100":
+    name: Insurance
+    level1: Insurance
+    level2: Insurance & Risk
+    level3: Operating Expenses
+    level4: Total Expense
+    category: expense
+
+  "6200":
+    name: Travel & Entertainment
+    level1: Travel & Entertainment
+    level2: Travel & Entertainment
+    level3: Operating Expenses
+    level4: Total Expense
+    category: expense
+
+  # === G&A ===
+  "7000":
+    name: Rent & Occupancy
+    level1: Rent & Occupancy
+    level2: Facilities
+    level3: General & Administrative
+    level4: Total Expense
+    category: expense
+
+  "7100":
+    name: Office Supplies
+    level1: Office Supplies
+    level2: Office & Admin
+    level3: General & Administrative
+    level4: Total Expense
+    category: expense
+
+  # === BELOW THE LINE ===
+  "8000":
+    name: Interest Expense
+    level1: Interest Expense
+    level2: Interest Expense
+    level3: Below the Line
+    level4: Below the Line
+    category: below-the-line
+    is_below_the_line: true
+    btl_sign: subtract
+
+  "8100":
+    name: Income Tax Expense
+    level1: Income Tax Expense
+    level2: Income Tax Expense
+    level3: Below the Line
+    level4: Below the Line
+    category: below-the-line
+    is_below_the_line: true
+    btl_sign: subtract

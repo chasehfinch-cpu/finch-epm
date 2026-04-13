@@ -29,6 +29,24 @@ finch-epm import <file>.csv                               # Import CSV/Excel int
 finch-epm open <file>.fdash                               # Open dashboard
 finch-epm service                                         # Run background sync
 finch-epm service --once                                  # Run one sync cycle
+finch-epm llm configure                                   # Configure LLM provider
+finch-epm llm list                                        # List configured LLM profiles
+finch-epm llm test                                        # Test LLM connection
+finch-epm ask "build me a P&L dashboard"                  # AI dashboard generation
+finch-epm ask "revenue by site" -c netsuite -p prod       # Scoped to a profile
+finch-epm ask "expense trend" --open                      # Generate and open
+finch-epm classify                                        # Review unclassified items
+finch-epm classify --accounts -c netsuite -p prod         # Classify unmapped GL accounts
+finch-epm mcp                                             # Start MCP server (stdio)
+finch-epm mcp --transport sse --port 8808                 # Start MCP server (HTTP)
+finch-epm coa setup                                       # Set up chart of accounts
+finch-epm coa import template.yaml                        # Import team COA template
+finch-epm coa show                                        # View current COA hierarchy
+finch-epm coa edit                                        # Open COA in editor
+finch-epm coa unmapped                                    # Show unclassified accounts
+finch-epm links setup                                     # Link tables across sources
+finch-epm links show                                      # View table links
+finch-epm links import team_links.yaml                    # Import shared links
 ```
 
 ## Dashboard file format (.fdash)

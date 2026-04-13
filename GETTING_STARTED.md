@@ -90,11 +90,27 @@ This opens a tabbed dashboard in your browser with charts, KPI tiles, and tables
 
 There are three ways to create dashboards:
 
-### Option A: Use AI
+### Option A: Use AI (any LLM provider)
 
-If you have Claude Code installed, type `/dashboard` in any Claude Code session. Claude will check what data you have synced, ask what you want to see, and generate a `.fdash` file for you.
+Configure your preferred LLM provider once:
 
-You can also paste the contents of `DASHBOARDS.md` into ChatGPT, Gemini, or any other AI and ask it to generate a dashboard.
+```
+finch-epm llm configure
+```
+
+Pick from: Anthropic (Claude), OpenAI (GPT), Google (Gemini), Ollama (local models), or any OpenAI-compatible endpoint.
+
+Then generate dashboards in plain English:
+
+```
+finch-epm ask "build me a site P&L dashboard"
+finch-epm ask "monthly revenue trend by subsidiary" --open
+finch-epm ask "top 10 customers by revenue" -c netsuite -p production
+```
+
+The `ask` command loads your catalog, builds a context-rich prompt with real table names and sample data, and validates the output. If the LLM makes an error, it automatically retries with the validation feedback.
+
+You can also use Claude Code's `/dashboard` command, paste `DASHBOARDS.md` into any AI chat, or use finch-epm's MCP server with any MCP-capable client (Claude Desktop, Cursor, etc.).
 
 ### Option B: Copy and modify a template
 
