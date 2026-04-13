@@ -903,13 +903,34 @@ def service(interval: int, once: bool) -> None:
 
 
 @cli.command()
-def setup() -> None:
+@click.option(
+    "--config",
+    type=click.Path(exists=True, dir_okay=True),
+    help="Config bundle path (for IT silent deployment). Directory or YAML "
+    "containing compilation_map.yaml, coa.yaml, and/or credentials .env files.",
+)
+def setup(config: str | None) -> None:
     """Interactive setup wizard for configuring data sources.
 
-    Walks through what you need, connects your data sources, syncs
-    data in the background, and shows you how to build dashboards.
+    For IT administrators: walks through connecting data sources, syncing
+    data, setting up the chart of accounts, and configuring the compilation
+    map. Run once per machine.
+
+    For silent deployment, use --config to pre-load a config bundle:
+
+        finch-epm setup --config \\\\server\\share\\finch-epm-config\\
+
+    The config directory can contain:
+        compilation_map.yaml  — imported as the compilation map
+        coa.yaml              — imported as the chart of accounts
+        flags.yaml            — imported as flag definitions
     """
     from finch_epm.paths import data_dir
+
+    # Handle silent config bundle import
+    if config:
+        _import_config_bundle(config)
+        return
 
     # Welcome
     click.echo()
@@ -1042,44 +1063,172 @@ def setup() -> None:
     )
     click.echo("  Sync started. It will run in the background.")
 
+    # ── STEP: Chart of Accounts ──
+    click.echo()
+    click.echo("  " + "=" * 50)
+    click.echo("  STEP: Chart of Accounts")
+    click.echo("  The chart of accounts defines how GL accounts map into")
+    click.echo("  your P&L hierarchy (Revenue, Expense, EBITDA, etc.).")
+    click.echo()
+
+    setup_coa = click.confirm("  Set up chart of accounts now?", default=True)
+    if setup_coa:
+        try:
+            from finch_epm.cache.local import LocalCacheEngine as _LCE
+            from finch_epm.cache.models import QueryRequest as _QR
+            from finch_epm.engine.coa import ChartOfAccounts
+            from finch_epm.paths import cache_db_path as _cdbp
+
+            _cache = _LCE(str(_cdbp()), read_only=True)
+            _account_rows: list[dict] = []
+            for _tname in ["Account", "ns__Account"]:
+                try:
+                    _r = _cache.execute_query(_QR(sql=f'SELECT * FROM "{_tname}"'))
+                    _account_rows = [dict(zip(_r.column_names, row)) for row in _r.rows]
+                    break
+                except Exception:
+                    continue
+            _cache.close()
+
+            if _account_rows:
+                _coa = ChartOfAccounts.from_accounts(_account_rows)
+                _path = _coa.save()
+                _counts = _coa.count_by_category()
+                click.echo(f"  Generated chart of accounts ({len(_coa.accounts)} accounts):")
+                for _cat, _cnt in sorted(_counts.items()):
+                    click.echo(f"    {_cat}: {_cnt}")
+                click.echo(f"  Saved to: {_path}")
+                click.echo(f"  Customize later: finch-epm coa edit")
+            else:
+                click.echo("  Account data not yet synced. Run 'finch-epm coa setup' after sync.")
+        except Exception as e:
+            click.echo(f"  Could not auto-generate COA: {e}")
+            click.echo("  Run 'finch-epm coa setup' after sync completes.")
+    else:
+        click.echo("  Skipped. Run 'finch-epm coa setup' when ready.")
+        click.echo("  Or import a team template: finch-epm coa import template.yaml")
+
+    # ── STEP: Compilation Map ──
+    click.echo()
+    click.echo("  " + "=" * 50)
+    click.echo("  STEP: Compilation Map (Data Linking)")
+    click.echo("  The compilation map links your data sources together")
+    click.echo("  through shared reference tables (Location, Department, etc.).")
+    click.echo("  This is the single source of truth for all dashboards.")
+    click.echo()
+
+    existing_map = click.prompt(
+        "  Options:\n"
+        "    1. Auto-detect reference tables from synced data (recommended)\n"
+        "    2. Import a team-shared compilation map\n"
+        "    3. Point to a map on a network share\n"
+        "    4. Skip for now\n"
+        "  Choice",
+        type=int,
+        default=1,
+    )
+
+    if existing_map == 2:
+        map_file = click.prompt("  Path to compilation map file")
+        try:
+            from finch_epm.engine.compilation_map import CompilationMap
+            _cmap = CompilationMap.load(map_file)
+            _cmap.save()
+            click.echo(f"  Imported: {_cmap.name} ({len(_cmap.references)} references)")
+        except Exception as e:
+            click.echo(f"  Import failed: {e}")
+    elif existing_map == 3:
+        net_path = click.prompt("  Network path (e.g., \\\\server\\share\\compilation_map.yaml)")
+        from finch_epm.engine.compilation_map import CompilationMap
+        CompilationMap.use_network_path(net_path)
+        click.echo(f"  Pointed to: {net_path}")
+    elif existing_map == 1:
+        click.echo("  Run 'finch-epm map setup' after sync completes to configure.")
+        click.echo("  The wizard will walk you through selecting reference tables.")
+    else:
+        click.echo("  Skipped. Run 'finch-epm map setup' when ready.")
+
     # Instruction guide
     click.echo()
     click.echo("  " + "=" * 50)
     click.echo("  SETUP COMPLETE")
     click.echo("  " + "=" * 50)
     click.echo()
-    click.echo("  Your data is syncing in the background. Here is what to do next:")
+    click.echo("  Your data is syncing in the background. Next steps:")
     click.echo()
-    click.echo("  1. BROWSE YOUR DATA")
-    click.echo("     See what tables are available:")
-    for ct, pn in configured:
-        click.echo(f"       finch-epm catalog --tables --accessible-only -c {ct} -p {pn}")
+    click.echo("  FOR IT:")
+    click.echo("    After sync completes (~15-30 min for large datasets):")
+    click.echo("      finch-epm map setup              # Link your reference tables")
+    click.echo("      finch-epm coa edit               # Customize the P&L hierarchy")
+    click.echo("    Then share with the team:")
+    click.echo(f"      Copy compilation_map.yaml and coa.yaml from {data_dir()}")
+    click.echo("      to your network share for other users to import.")
     click.echo()
-    click.echo("  2. OPEN A TEMPLATE DASHBOARD")
-    click.echo("     finch-epm ships with example dashboards you can try right away:")
-    click.echo(f"       finch-epm open examples/netsuite_gl_overview.fdash")
-    click.echo(f"       finch-epm open examples/multi_tab_financial.fdash")
+    click.echo("  FOR END USERS:")
+    click.echo("    Double-click any .fdash file to open a dashboard.")
+    click.echo("    Or generate one with AI:")
+    click.echo("      finch-epm ask \"build me a revenue dashboard\" --open")
     click.echo()
-    click.echo("  3. BUILD YOUR OWN DASHBOARD")
-    click.echo("     Option A: Use AI -- open Claude Code and type /dashboard")
-    click.echo("     Option B: Copy a template and modify the SQL queries")
-    click.echo("     Option C: Write a .fdash file from scratch (see DASHBOARDS.md)")
-    click.echo()
-    click.echo("  4. SHARE A DASHBOARD")
-    click.echo("     Send any .fdash file to a colleague. They install finch-epm,")
-    click.echo("     run setup with their own credentials, and open the same file.")
-    click.echo("     No data is in the file -- it renders against their own access.")
-    click.echo()
-    click.echo("  5. IMPORT CSV OR EXCEL DATA")
-    click.echo("     finch-epm import budget.csv")
-    click.echo("     finch-epm import reference.xlsx --sheet Locations")
+    click.echo("  TEMPLATES:")
+    click.echo("    finch-epm open examples/netsuite_gl_overview.fdash")
+    click.echo("    finch-epm open examples/multi_tab_financial.fdash")
     click.echo()
     click.echo("  KEY FILES:")
-    click.echo(f"    Local data:     {data_dir()}")
-    click.echo(f"    Dashboard spec: DASHBOARDS.md (complete reference for .fdash format)")
-    click.echo(f"    Templates:      examples/ (ready-to-use .fdash files)")
-    click.echo(f"    AI prompt:      /dashboard command in Claude Code")
+    click.echo(f"    Local data:        {data_dir()}")
+    click.echo(f"    Compilation map:   finch-epm map show")
+    click.echo(f"    Chart of accounts: finch-epm coa show")
+    click.echo(f"    Dashboard spec:    DASHBOARDS.md")
     click.echo()
+
+
+def _import_config_bundle(config_path: str) -> None:
+    """Import a pre-built config bundle for silent IT deployment.
+
+    The bundle directory can contain:
+        compilation_map.yaml — imported as the compilation map
+        coa.yaml — imported as the chart of accounts
+        flags.yaml — imported as flag definitions
+    """
+    from finch_epm.paths import config_dir
+
+    bundle = Path(config_path)
+    if bundle.is_file():
+        bundle = bundle.parent
+
+    imported = []
+
+    # Import compilation map
+    map_file = bundle / "compilation_map.yaml"
+    if map_file.exists():
+        from finch_epm.engine.compilation_map import CompilationMap
+        cmap = CompilationMap.load(str(map_file))
+        cmap.save()
+        imported.append(f"Compilation map: {cmap.name} ({len(cmap.references)} references)")
+
+    # Import chart of accounts
+    coa_file = bundle / "coa.yaml"
+    if coa_file.exists():
+        from finch_epm.engine.coa import ChartOfAccounts
+        coa = ChartOfAccounts.load(str(coa_file))
+        coa.save()
+        imported.append(f"Chart of accounts: {len(coa.accounts)} accounts")
+
+    # Import flags
+    flags_file = bundle / "flags.yaml"
+    if flags_file.exists():
+        from finch_epm.engine.flags import FlagStore
+        flags = FlagStore.load(str(flags_file))
+        flags.save()
+        imported.append(f"Flags: {sum(len(fs.flags) for fs in flags.flag_sets.values())} definitions")
+
+    if imported:
+        click.echo("Config bundle imported:")
+        for item in imported:
+            click.echo(f"  {item}")
+        click.echo(f"\nFiles saved to: {config_dir()}")
+    else:
+        click.echo(f"No config files found in: {bundle}")
+        click.echo("Expected: compilation_map.yaml, coa.yaml, flags.yaml")
 
 
 def _show_prerequisites(connector: str) -> None:

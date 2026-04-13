@@ -4,11 +4,33 @@ build-backend = "hatchling.build"
 
 [project]
 name = "finch-epm"
-version = "0.3.0"
-description = "Local-first portable analytics layer for EPM and database systems"
+version = "0.5.0"
+description = "Local-first portable analytics layer for EPM and database systems. Connect to NetSuite, SQL Server, PostgreSQL, Snowflake, BigQuery, or any ODBC source. Cache data locally. Share dashboards as portable .fdash files."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
+authors = [
+    { name = "Chase Finch" },
+]
+keywords = [
+    "analytics", "bi", "business-intelligence", "dashboard", "epm",
+    "finance", "netsuite", "reporting", "sql-server", "duckdb",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Office/Business :: Financial :: Accounting",
+    "Topic :: Database",
+]
 dependencies = [
     "duckdb>=1.0",
     "click>=8.1",
@@ -21,25 +43,20 @@ dependencies = [
     "sqlglot>=23.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/chasehfinch-cpu/finch-epm"
+Repository = "https://github.com/chasehfinch-cpu/finch-epm"
+Documentation = "https://github.com/chasehfinch-cpu/finch-epm/blob/main/GETTING_STARTED.md"
+Issues = "https://github.com/chasehfinch-cpu/finch-epm/issues"
+Changelog = "https://github.com/chasehfinch-cpu/finch-epm/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
-sqlserver = [
-    "pyodbc>=5.0",
-]
-postgres = [
-    "psycopg2-binary>=2.9",
-]
-snowflake = [
-    "snowflake-connector-python>=3.0",
-]
-bigquery = [
-    "google-cloud-bigquery>=3.0",
-]
-odbc = [
-    "pyodbc>=5.0",
-]
-mcp = [
-    "mcp>=1.0",
-]
+sqlserver = ["pyodbc>=5.0"]
+postgres = ["psycopg2-binary>=2.9"]
+snowflake = ["snowflake-connector-python>=3.0"]
+bigquery = ["google-cloud-bigquery>=3.0"]
+odbc = ["pyodbc>=5.0"]
+mcp = ["mcp>=1.0"]
 all = [
     "pyodbc>=5.0",
     "psycopg2-binary>=2.9",
